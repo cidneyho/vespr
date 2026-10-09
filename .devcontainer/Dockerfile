@@ -39,6 +39,7 @@ RUN git clone --depth 1 -b v2.4.3 https://github.com/eProsima/Micro-XRCE-DDS-Age
 # PX4 SITL, pre-built. px4_msgs must match: release/1.16
 RUN git clone --recursive --depth 1 --shallow-submodules -b v1.16.0 \
         https://github.com/PX4/PX4-Autopilot.git ~/PX4-Autopilot && \
+    git -C ~/PX4-Autopilot/platforms/nuttx/NuttX/nuttx fetch --depth 1 origin tag nuttx-10.3.0 && \
     bash ~/PX4-Autopilot/Tools/setup/ubuntu.sh --no-nuttx && \
     cd ~/PX4-Autopilot && make px4_sitl
 
