@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>perch_sim</name>
+  <name>perch_flight</name>
   <version>0.0.0</version>
-  <description>Gazebo simulation docs and test flights for the X500</description>
+  <description>Flight control nodes for the X500, talking to PX4 over ROS 2</description>
   <maintainer email="chonodom@gmail.com">Dom Taing</maintainer>
   <license>TODO</license>
 

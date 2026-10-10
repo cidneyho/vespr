@@ -1,7 +1,7 @@
-"""Fly the simulated X500 around a square using PX4 offboard control over ROS 2.
+"""Test flight: fly the simulated X500 around a square using PX4 offboard control over ROS 2.
 
 Start the sim and the Micro XRCE-DDS Agent first (see README.md), then:
-    ros2 run perch_sim fly_square
+    ros2 run perch_flight fly_square
 
 Positions are relative to where the drone started:
 north / east in metres, altitude in metres above the start point,
@@ -35,7 +35,7 @@ WAYPOINTS = [
 TOLERANCE = 0.5      # metres from a waypoint that counts as arrived
 HOVER_TIME = 2.0     # seconds to hover at each waypoint
 WAYPOINT_TIMEOUT = 30.0
-RATE = 10.0          # Hz. PX4 drops out of offboard if setpoints stop (< 2 Hz)
+RATE = 10.0          # Hz. PX4 needs setpoints faster than 2 Hz to stay in offboard
 
 # PX4's QoS for /fmu topics; subscribers with a different profile receive nothing
 PX4_QOS = QoSProfile(

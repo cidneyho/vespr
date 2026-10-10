@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'perch_sim'
+package_name = 'perch_flight'
 
 setup(
     name=package_name,
@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     entry_points={
         'console_scripts': [
-            'fly_square = perch_sim.fly_square:main',
+            'fly_square = perch_flight.fly_square:main',
         ],
     },
 )
