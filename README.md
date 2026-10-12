@@ -9,8 +9,8 @@ Mocap lives in its own repo.
 ```
 src/
   perch_perception/
-  perch_flight/
-  perch_sim/
+  perch_flight/         flight control nodes (fly_square test flight)
+  perch_sim/            Gazebo sim docs
   perch_bringup/
 docs/interfaces.md      topics shared between packages
 px4_config/             exported PX4 parameter files
@@ -63,3 +63,5 @@ ros2 topic list
 ```
 
 Rebuild after pulling changes: `colcon build --symlink-install && source install/setup.bash`.
+
+To run the Gazebo sim, see [src/perch_sim/README.md](src/perch_sim/README.md). To fly it from ROS 2, see [src/perch_flight/README.md](src/perch_flight/README.md).
