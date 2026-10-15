@@ -9,3 +9,15 @@ __pycache__/
 .pytest_cache/
 
 .DS_Store
+
+# planning document, kept local
+*CV_Workstream_Plan.md
+
+# local working notes
+session_notes/
+
+# recorded clips: raw .bag data and .mp4 previews
+*.bag
+*.mp4
+data/
+vespr_recordings/
