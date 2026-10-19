@@ -142,6 +142,9 @@ Replays a `.bag` recording. It needs no camera.
   and no frame has arrived for 1 second.
 - Intrinsics come from the recording, so a bag replays with the calibration it was recorded
   with.
+- Each depth image comes paired with the left IR image of the same exposure. On real clips this
+  was checked with librealsense 2.54.2 (Mac) and 2.58.4 (Jetson): every pair has identical
+  timestamps. A clip recorded on the Jetson replays on the Mac.
 
 ### The shared frame loop
 
@@ -376,7 +379,8 @@ Unlike the rest of the package, it imports `pyrealsense2` directly and has no te
 
 ## Tests
 
-124 tests, run with `python -m pytest` from the package folder. None of them needs a camera
+132 tests, run with `python -m pytest` from the package folder. All pass on the Mac and on the
+Jetson. None of them needs a camera
 or a network.
 
 | File | Tests | What it checks |
@@ -388,7 +392,7 @@ or a network.
 | `test_run.py` | 9 | The depth summary ignores zeros, the summary line, frame counting and `--max-frames`, and replaying a synthetic bag through `main()` |
 | `test_clip_storage.py` | 60 | Clip grouping, still-being-written, copy and delete decisions, the rclone listing format, `upload`, `download`, `cleanup`, the command line, an unreadable clip, Ctrl+C, partial downloads and a login that expires mid-run, all with an in-memory rclone |
 | `test_clip_storage_rclone.py` | 4 | `upload`, `download` and `cleanup` with the real rclone between two local folders (skipped where rclone is missing) |
-| `test_no_realsense_leak.py` | 5 | `clip_storage`, `frame_source`, `process_source`, `record` and `run` import without pulling in `pyrealsense2` (checked in a fresh interpreter) |
+| `test_no_realsense_leak.py` | 5 | `data_collection.clip_storage`, `data_collection.record`, `frame_source`, `process_source` and `run` import without pulling in `pyrealsense2` (checked in a fresh interpreter) |
 
 Helpers:
 
@@ -397,7 +401,10 @@ Helpers:
 - `test/fake_rclone.py` is an in-memory stand-in for rclone and the Drive, for the
   `clip_storage` tests.
 - `test/synthetic_bag.py` writes a small `.bag` with known contents using librealsense's software
-  device, so bag replay is tested on the real playback path without a camera.
+  device, so bag replay is tested on the real playback path without a camera. It writes each IR
+  frame before its depth frame: librealsense 2.58 pairs a depth frame with the newest IR frame
+  already written, so the other order pairs depth `i` with IR `i - 1`. Bags from a real camera
+  pair correctly either way.
 
 Tests that need `pyrealsense2` or `cv2` are skipped where those are missing. In the dev
 container, where `pyrealsense2` is not installed, the bag tests do not run.
@@ -407,20 +414,25 @@ container, where `pyrealsense2` is not installed, the bag tests do not run.
 | Part | Real camera or real data | Result |
 |---|---|---|
 | `LiveSource` through `run.py` | Jetson Orin Nano, D435i on USB 2, 2026-10-10 | 30 frames in 5.0 s at 10 fps, chosen from the USB link. With `--imu`, every frame carried an IMU sample. |
-| `BagSource` | Synthetic bags in the tests. One real clip, `2026-10-11T22-24-34.bag` (173 frames). | Replays |
+| `BagSource` | Synthetic bags in the tests. Real clips from the Mac (2026-10-11) and the Jetson (2026-10-19). | Replays on both. Depth and IR of each frame have identical timestamps. |
 | Recorder, first version (camera opened in-process) | John's Mac, 2026-10-11 | Recorded one good clip, then froze while closing the camera |
-| Recorder, current version (through `ProcessSource`) | Never run against a camera | Unverified |
+| Recorder, current version (through `ProcessSource`) | Jetson, D435i on USB 2, controlled from the Mac over the USB-C cable, 2026-10-19 | Two indoor clips at 848x480 and 10 fps (106 and 49 frames). No freezes. |
+| `clip_storage` | Jetson to Google Drive and Drive to the Mac, 2026-10-19 | Uploaded 198 MB in 49 s with matching checksums; a second `upload` sent nothing; the downloaded clip replayed on the Mac. `cleanup` not yet run on real clips. |
 
 The macOS findings that shaped `ProcessSource` and `close()` came from `pyrealsense2-macosx`
-2.54.2 on John's Mac. They have not been checked on the Jetson.
+2.54.2 on John's Mac. On the Jetson (2.58.4) the recorder opened and closed the camera through
+`ProcessSource` for every preview and recording session without freezing, but whether an
+in-process close would also freeze there has not been tested.
 
 ## Not implemented yet
 
 - Branch detection (classical line-segment baseline, then a learned detector)
 - Mask to 3D branch axis, diameter, confidence
-- Publishing anything from the ROS node, and a `BranchPose` message
+- Publishing anything from the ROS node. NAMING.md proposes `branch_pose` as a
+  `geometry_msgs/msg/PoseStamped`, not a custom message type
 - A video-file-plus-intrinsics-JSON source
 - The recorder's sidecar JSON (camera details, scene metadata, emitter state, git commit), its
   USB 2 refusal, and IMU recording
 - Depth preset selection (the camera runs its default preset)
+- A comparison clip at 1280x720 on USB 3, against today's 848x480
 - IMU to image timestamp alignment

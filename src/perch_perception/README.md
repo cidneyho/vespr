@@ -3,7 +3,9 @@
 Finds the perch branch in camera images and reports its location to flight control.
 
 This is a skeleton. The node starts and spins but does not subscribe or publish yet, and branch
-detection and localization are not written yet. What the code does today, module by module, is
+detection and localization are not written yet. Data collection works end to end: on 2026-10-19
+clips were recorded on the Jetson from a Mac, uploaded to Google Drive, downloaded to the Mac and
+replayed there. What the code does today, module by module, is
 written up in [`perch_perception/README.md`](perch_perception/README.md).
 
 ## Layout
@@ -15,7 +17,7 @@ perch_perception/
   realsense_source.py   live D435i and .bag replay sources (the only pyrealsense2 import)
   run.py                reads a source end to end and prints a depth summary per frame
   process_source.py     runs a frame source in a child process, so a camera freeze cannot freeze the caller
-  data_collection/       tools for collecting training data, kept apart from the perception code
+  data_collection/      tools for collecting training data, kept apart from the perception code
     record.py           browser page with a live view and a Record / Stop button
     clip_storage.py     upload, download and clean up clips on Google Drive (rclone)
 launch/
@@ -35,9 +37,11 @@ python -m perch_perception.run --bag FILE    # replay a .bag
 ```
 
 Every source yields the same tuple: image (left IR), depth in meters (0 means unknown),
-intrinsics, timestamp in seconds, and an IMU sample or `None`. On USB 2 the live source runs
-at 10 fps. `--imu` adds accel and gyro on Linux; it is refused on macOS, where librealsense
-crashes when the motion streams start.
+intrinsics, timestamp in seconds, and an IMU sample or `None`. The live source runs at 848x480,
+at 30 fps on USB 3 and 10 fps on USB 2. 848x480 stays the resolution for now; once the camera is
+on USB 3, a clip at 1280x720 (`--width 1280 --height 720`) is worth comparing for spotting the
+branch from farther away. `--imu` adds accel and gyro on Linux; it is refused on macOS, where
+librealsense crashes when the motion streams start.
 
 ## Interfaces
 
@@ -49,6 +53,29 @@ The rows that involve perception are still TBD there:
 | in | Camera images | camera driver / simulation |
 | in | Drone pose | PX4 onboard estimate |
 | out | Branch location | flight control |
+
+## Setting up the Jetson
+
+What the Jetson needs besides this repo (cloned to `~/vespr` on ours):
+
+- **librealsense built from source with `BUILD_ROSBAG2=OFF`.** Since 2.58, librealsense records
+  in the ROS 2 format (`.db3`) by default and refuses to write `.bag`, so the recorder fails. The
+  Mac's `pyrealsense2-macosx` 2.54.2 cannot read `.db3`, and raw depth is kept in `.bag` files
+  only. Ours is v2.58.4, built in `~/librealsense/build` with:
+
+  ```bash
+  cmake .. -DCMAKE_BUILD_TYPE=Release -DFORCE_RSUSB_BACKEND=ON -DBUILD_PYTHON_BINDINGS=ON \
+           -DBUILD_EXAMPLES=OFF -DBUILD_GRAPHICAL_EXAMPLES=OFF -DBUILD_ROSBAG2=OFF
+  make -j5
+  ```
+
+- **A Python environment** with `numpy`, `opencv-python` and `pytest`, which finds
+  `pyrealsense2` in `~/librealsense/build/Release` through a `.pth` file. Ours is
+  `~/d435i-check/.venv`; run the commands below with its `python`.
+- **tmux and rclone** (see Google Drive storage), and the cable fix below if a Mac connects over
+  USB-C.
+- **The camera on a USB 3 port** for 30 fps. Check the Jetson sees it with `lsusb`, which lists
+  "Intel(R) RealSense(TM) Depth Camera 435i".
 
 ## Recording clips
 
@@ -62,13 +89,31 @@ through an SSH tunnel.
 | Where | Connection | Jetson address | Internet needed |
 |---|---|---|---|
 | Indoors | Both on the same Wi-Fi | its Wi-Fi address | No |
-| Outdoors | A cable between the Mac and the Jetson | `192.168.55.1` over the Jetson's USB-C port, or `<jetson hostname>.local` over Ethernet | No |
+| Outdoors | A USB-C cable from the Mac to the Jetson's USB-C port | `192.168.55.1` | No |
 
-Both outdoor addresses are still to be confirmed on our Jetson.
+Over the cable the Mac gets `192.168.55.100` by itself. If macOS asks whether to allow the
+accessory, allow it. The cable was tested on 2026-10-18 (JetPack R39.2.1).
+
+**Once per Jetson: fix the cable link for Macs.** The Jetson's USB-C port carries two network
+links: RNDIS for Windows (`usb0`) and NCM for macOS (`usb1`). NVIDIA's startup script,
+`/opt/nvidia/l4t-usb-device-mode/nv-l4t-usb-device-mode-start.sh`, sets up `usb0` twice and
+never `usb1`, so a Mac's link stays down. A systemd drop-in attaches `usb1` after that script
+runs, and a JetPack update that replaces the script leaves it in place. Run this from the Mac
+once, over the cable while the link is up or over Wi-Fi:
+
+```bash
+ssh -t perch@<jetson address> 'sudo mkdir -p /etc/systemd/system/nv-l4t-usb-device-mode.service.d && printf "%s\n" "[Service]" "# NVIDIA'"'"'s script sets up usb0 twice and never usb1, the NCM link macOS uses." "ExecStartPost=/bin/sh -c '"'"'if [ -e /sys/class/net/usb1 ]; then /sbin/ip link set dev usb1 master l4tbr0; /sbin/ip link set dev usb1 up; fi'"'"'" | sudo tee /etc/systemd/system/nv-l4t-usb-device-mode.service.d/usb1.conf && sudo systemctl daemon-reload'
+```
+
+Until the Jetson reboots, bring the link up by hand on the Jetson:
+`sudo ip link set usb1 master l4tbr0` and then `sudo ip link set usb1 up`.
 
 ### Starting a session
 
 ```bash
+# outdoors, on the Mac: copy the Mac's clock to the Jetson, which has no internet to set it
+ssh -t perch@192.168.55.1 "sudo date -s @$(date +%s)"
+
 # on the Mac: log in to the Jetson and forward the page to the Mac
 ssh -L 8080:localhost:8080 perch@<jetson address>
 
@@ -95,15 +140,19 @@ named by its start time, for example `2026-10-10T14-32-05`:
 | `.bag` | Raw depth and left IR. This is the data, and `run.py --bag` replays it. |
 | `.mp4` | A small grayscale video for watching the clip. Lossy: never use it for training or measurement. |
 
-The names come from the Jetson's clock, and without internet the Jetson cannot set it. The
-recorder prints the clock's time when it starts, so check it then. A clip never replaces an
+The names come from the Jetson's clock, and without internet the Jetson cannot set it. Until it
+reaches the internet, its clock starts at the date its system image was built (June 5, 2026 on
+ours), so outdoor clips would be named June 5. So outdoors, copy the Mac's clock to it first
+(see Starting a session). The
+recorder also prints the clock's time when it starts, so check it then. A clip never replaces an
 earlier one: if the name is taken, the new clip gets `-2`, `-3` and so on.
 
 The folders are in the home folder on purpose: macOS can sync Desktop and Documents to iCloud
 Drive, and clips are large.
 
 The camera restarts when recording starts and stops, and each camera session runs in its own
-process, so expect a pause of about five seconds each time. A `.bag` is uncompressed: about 12 MB per second at 848x480 and 10 fps.
+process, so expect a pause of about five seconds each time. A `.bag` is uncompressed: at 848x480
+it grows by about 12 MB per second at 10 fps and about 37 MB per second at 30 fps.
 
 ## Google Drive storage
 
@@ -131,7 +180,9 @@ Run `upload` on the Jetson after a recording session, when it is online. Re-runn
 safe: it only sends what is still missing. A session's clips can take a long time over Wi-Fi, so
 when you start it over ssh, run it inside `tmux` (`sudo apt install tmux` if it is missing): start
 `tmux`, then the command, and after a dropped connection ssh back in and run `tmux attach`.
-Otherwise the upload stops when the ssh connection drops. A clip changed in the last minute is
+Otherwise the upload stops when the ssh connection drops. Over the Jetson's Wi-Fi it sent about 4
+MB per second on 2026-10-19, so a 20-second clip at 30 fps (about 0.75 GB) takes about three
+minutes. A clip changed in the last minute is
 skipped as still being written. Nothing on the Drive is ever overwritten or deleted. `cleanup`
 deletes a local clip only when every one of its files is on the Drive with a matching checksum.
 `--folder` and `--remote` change the local folder and the Drive location.
@@ -192,9 +243,10 @@ colcon test --packages-select perch_perception
 colcon test-result --verbose
 ```
 
-Without ROS, for example on a Mac, run pytest from this folder. It needs Python 3.11 with
-`numpy`, `opencv-python`, `pytest` and `pyrealsense2-macosx==2.54.2`. Tests that need
-`pyrealsense2` or `cv2` are skipped where they are missing.
+Without ROS, run pytest from this folder. On a Mac it needs Python 3.11 with `numpy`,
+`opencv-python`, `pytest` and `pyrealsense2-macosx==2.54.2`. On the Jetson, use the Python
+environment from Setting up the Jetson. Tests that need `pyrealsense2` or `cv2` are skipped where
+they are missing. All 132 pass on both (librealsense 2.54.2 on the Mac, 2.58.4 on the Jetson).
 
 ```bash
 python -m pytest
