@@ -15,6 +15,7 @@ estimate and no diameter estimate, and the ROS node publishes nothing.
 - [Camera and bag sources](#camera-and-bag-sources-realsense_sourcepy)
 - [Running a source in a child process](#running-a-source-in-a-child-process-process_sourcepy)
 - [The clip recorder](#the-clip-recorder-recordpy)
+- [Keeping clips on Google Drive](#keeping-clips-on-google-drive-clip_storagepy)
 - [Reading a source from the command line](#reading-a-source-from-the-command-line-runpy)
 - [The ROS node](#the-ros-node-perception_nodepy)
 - [The branch distance script](#the-branch-distance-script-branch_distancepy)
@@ -286,6 +287,38 @@ no answer.
 Ctrl+C in the terminal ends the current session. A recording in progress is finished and closed
 properly. Then the web server shuts down.
 
+## Keeping clips on Google Drive (`clip_storage.py`)
+
+```bash
+python -m perch_perception.clip_storage upload | download NAME... | download --missing | cleanup [--yes]
+    --domain indoor|outdoor [--folder FOLDER] [--remote REMOTE]
+```
+
+Copies clips between a local folder and a folder in John's Google Drive, using rclone. The
+required `--domain` picks both: `indoor` means `~/vespr_recordings/indoor` and
+`vespr-drive:VESPR Recordings/Indoors`; `outdoor` means `.../outdoor` and `.../Outdoors`. Setup is
+in the [package README](../README.md#google-drive-storage).
+
+- **Clips.** A clip is every file directly in the folder that shares a name and ends in `.bag`,
+  `.mp4` or `.json`. Hidden files and other extensions are ignored.
+- **Still being written.** A clip with any file changed in the last 60 seconds is skipped by
+  `upload` and `cleanup`.
+- **`upload`** lists the Drive folder once (names, sizes, MD5 checksums), then copies each local
+  file that is missing there with `rclone copyto --ignore-existing`. rclone checks each copy's
+  checksum. A file already there with the same size is skipped. A clip that has a file there
+  with the same name but a different size is a conflict, and none of it is uploaded.
+- **`download`** works the same way in the other direction. A file name such as `X.bag` is taken
+  to mean clip `X`. `--missing` fetches every clip file that is not local.
+- **`cleanup`** computes each local file's MD5 in one-megabyte blocks and compares it with the
+  Drive's. Only clips whose every file matches are listed as safe, and deleted with `--yes`.
+- **Output.** `upload` and `download` print `uploading <clip> (...)...` before each clip and
+  `uploaded <clip> (...)` after it, one line at a time even when run over ssh. Any command refuses
+  to run when `--remote` is the same local folder as `--folder`.
+- **Exit codes.** 0 when everything that should have moved moved; 1 when a clip failed,
+  conflicted or was not found, when a deletion failed, or when rclone is not set up.
+- **Structure.** Plain-Python functions decide what to do. The `Rclone` class is the only code
+  that runs rclone, and the commands take it as an argument, so tests use an in-memory stand-in.
+
 ## Reading a source from the command line (`run.py`)
 
 ```bash
@@ -338,7 +371,8 @@ Unlike the rest of the package, it imports `pyrealsense2` directly and has no te
 
 ## Tests
 
-63 tests, run with `python -m pytest` from the package folder. None of them needs a camera.
+124 tests, run with `python -m pytest` from the package folder. None of them needs a camera
+or a network.
 
 | File | Tests | What it checks |
 |---|---|---|
@@ -347,12 +381,16 @@ Unlike the rest of the package, it imports `pyrealsense2` directly and has no te
 | `test_process_source.py` | 10 | Frames and images cross the process boundary, `fps` is passed back, open errors and open timeouts end the child, the source is closed before the child exits, Ctrl+C does not kill the child early, a frozen child is killed and reported, a dying child is reported |
 | `test_record.py` | 22 | Clip naming, the default folder, giving files back under `sudo`, preview and recording sessions, the preview video's frame count, status states, error handling, the camera loop following the button, and every web endpoint |
 | `test_run.py` | 9 | The depth summary ignores zeros, the summary line, frame counting and `--max-frames`, and replaying a synthetic bag through `main()` |
-| `test_no_realsense_leak.py` | 4 | `frame_source`, `process_source`, `record` and `run` import without pulling in `pyrealsense2` (checked in a fresh interpreter) |
+| `test_clip_storage.py` | 56 | Clip grouping, still-being-written, copy and delete decisions, the rclone listing format, `upload`, `download`, `cleanup` and the command line, all with an in-memory rclone |
+| `test_clip_storage_rclone.py` | 4 | `upload`, `download` and `cleanup` with the real rclone between two local folders (skipped where rclone is missing) |
+| `test_no_realsense_leak.py` | 5 | `clip_storage`, `frame_source`, `process_source`, `record` and `run` import without pulling in `pyrealsense2` (checked in a fresh interpreter) |
 
 Helpers:
 
 - `test/fake_source.py` holds in-memory sources, including ones that are slow to open, freeze on
   close or die part-way, for the process tests.
+- `test/fake_rclone.py` is an in-memory stand-in for rclone and the Drive, for the
+  `clip_storage` tests.
 - `test/synthetic_bag.py` writes a small `.bag` with known contents using librealsense's software
   device, so bag replay is tested on the real playback path without a camera.
 
