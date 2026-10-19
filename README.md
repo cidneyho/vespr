@@ -13,6 +13,7 @@ src/
   perch_sim/            Gazebo sim docs
   perch_bringup/
 docs/interfaces.md      topics shared between packages
+docs/system-map/        system architecture (from the FigJam board)
 px4_config/             exported PX4 parameter files
 .devcontainer/          Docker dev environment
 ```
