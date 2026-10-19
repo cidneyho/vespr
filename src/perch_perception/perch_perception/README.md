@@ -14,8 +14,8 @@ estimate and no diameter estimate, and the ROS node publishes nothing.
 - [The frame every source yields](#the-frame-every-source-yields-frame_sourcepy)
 - [Camera and bag sources](#camera-and-bag-sources-realsense_sourcepy)
 - [Running a source in a child process](#running-a-source-in-a-child-process-process_sourcepy)
-- [The clip recorder](#the-clip-recorder-recordpy)
-- [Keeping clips on Google Drive](#keeping-clips-on-google-drive-clip_storagepy)
+- [The clip recorder](#the-clip-recorder-data_collectionrecordpy)
+- [Keeping clips on Google Drive](#keeping-clips-on-google-drive-data_collectionclip_storagepy)
 - [Reading a source from the command line](#reading-a-source-from-the-command-line-runpy)
 - [The ROS node](#the-ros-node-perception_nodepy)
 - [The branch distance script](#the-branch-distance-script-branch_distancepy)
@@ -40,7 +40,7 @@ estimate and no diameter estimate, and the ROS node publishes nothing.
      prints a depth summary     runs a source in a child          and pose modules)
                                 process, frames over a pipe
                                            |
-                                       record.py
+                               data_collection/record.py
                          browser page, .bag + .mp4 per clip
 ```
 
@@ -208,15 +208,17 @@ itself a `FrameSource`.
 Messages on the pipe are `(kind, payload)` pairs: `('opened', fps)`, `('frame', Frame)`,
 `('error', message)` and `('closed', None)`.
 
-## The clip recorder (`record.py`)
+## The clip recorder (`data_collection/record.py`)
 
 ```bash
-python -m perch_perception.record [--out FOLDER] [--port 8080] [--width 848] [--height 480] [--fps N]
+python -m perch_perception.data_collection.record --domain indoor|outdoor [--out FOLDER] [--port 8080] [--width 848] [--height 480] [--fps N]
 ```
 
 A camera loop plus a small web server. Open `http://localhost:8080` to get a live view of the
 left IR image and a Record / Stop button. Run it on the Jetson and reach the page through an SSH
-tunnel. Do not run it on John's Mac, which kernel-panicked twice while it streamed.
+tunnel (see "Recording clips" in the package README). Do not run it on John's Mac, which
+kernel-panicked twice while it streamed. At startup it prints the computer's clock, which names
+the clips.
 
 ### Sessions
 
@@ -233,7 +235,9 @@ clip ends, for whatever reason, the recorder goes back to preview.
 ### What one clip produces
 
 Files are named by the clip's start time, for example `2026-10-10T14-32-05`. Colons are left out
-so the name is valid on every file system.
+so the name is valid on every file system. If the folder already has a clip by that name, as
+when a Jetson without internet has the wrong time, `free_clip_name` adds `-2`, `-3` and so on,
+so an earlier `.bag` is never written over.
 
 | File | Contents |
 |---|---|
@@ -245,11 +249,12 @@ or refuse to record over USB 2. Clips made with it so far are practice clips.
 
 ### Where clips go
 
-By default `~/vespr_recordings`, directly in the home folder, because macOS can sync Desktop and
-Documents to iCloud Drive and clips are hundreds of megabytes. Under `sudo` the folder is still
-the home folder of the person who ran `sudo` (from `SUDO_USER`). The folder is created if it is
-missing. Under `sudo` the folder and both files are handed back to that person (from `SUDO_UID`
-and `SUDO_GID`), so they don't end up owned by root.
+`--domain` (required) picks `~/vespr_recordings/indoor` or `~/vespr_recordings/outdoor`, the
+folders `clip_storage` uploads from; `--out` overrides it. They sit directly in the home folder,
+because macOS can sync Desktop and Documents to iCloud Drive and clips are hundreds of megabytes.
+Under `sudo` the folder is still the home folder of the person who ran `sudo` (from `SUDO_USER`).
+The folder is created if it is missing. Under `sudo` the folder and both files are handed back to
+that person (from `SUDO_UID` and `SUDO_GID`), so they don't end up owned by root.
 
 ### Recorder states
 
@@ -287,10 +292,10 @@ no answer.
 Ctrl+C in the terminal ends the current session. A recording in progress is finished and closed
 properly. Then the web server shuts down.
 
-## Keeping clips on Google Drive (`clip_storage.py`)
+## Keeping clips on Google Drive (`data_collection/clip_storage.py`)
 
 ```bash
-python -m perch_perception.clip_storage upload | download NAME... | download --missing | cleanup [--yes]
+python -m perch_perception.data_collection.clip_storage upload | download NAME... | download --missing | cleanup [--yes]
     --domain indoor|outdoor [--folder FOLDER] [--remote REMOTE]
 ```
 
@@ -379,9 +384,9 @@ or a network.
 | `test_frame_source.py` | 6 | Depth scaling, zero kept as unknown, `float32`, the `Frame` unpacks in the agreed order, iteration and `with` blocks |
 | `test_realsense_source.py` | 12 | `BagSource` end to end on a synthetic bag: every frame once (the buffer copy), depth in meters, zeros kept, the image is left IR, timestamps in seconds, recorded intrinsics, no IMU, missing file. Also the USB frame rate choice and the macOS IMU refusal. |
 | `test_process_source.py` | 10 | Frames and images cross the process boundary, `fps` is passed back, open errors and open timeouts end the child, the source is closed before the child exits, Ctrl+C does not kill the child early, a frozen child is killed and reported, a dying child is reported |
-| `test_record.py` | 22 | Clip naming, the default folder, giving files back under `sudo`, preview and recording sessions, the preview video's frame count, status states, error handling, the camera loop following the button, and every web endpoint |
+| `test_record.py` | 26 | Clip naming, a taken clip name getting `-2`, `--domain` and the folders, giving files back under `sudo`, preview and recording sessions, the preview video's frame count, status states, error handling, the camera loop following the button, and every web endpoint |
 | `test_run.py` | 9 | The depth summary ignores zeros, the summary line, frame counting and `--max-frames`, and replaying a synthetic bag through `main()` |
-| `test_clip_storage.py` | 56 | Clip grouping, still-being-written, copy and delete decisions, the rclone listing format, `upload`, `download`, `cleanup` and the command line, all with an in-memory rclone |
+| `test_clip_storage.py` | 60 | Clip grouping, still-being-written, copy and delete decisions, the rclone listing format, `upload`, `download`, `cleanup`, the command line, an unreadable clip, Ctrl+C, partial downloads and a login that expires mid-run, all with an in-memory rclone |
 | `test_clip_storage_rclone.py` | 4 | `upload`, `download` and `cleanup` with the real rclone between two local folders (skipped where rclone is missing) |
 | `test_no_realsense_leak.py` | 5 | `clip_storage`, `frame_source`, `process_source`, `record` and `run` import without pulling in `pyrealsense2` (checked in a fresh interpreter) |
 

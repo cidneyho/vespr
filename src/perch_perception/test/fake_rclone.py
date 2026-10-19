@@ -2,7 +2,7 @@
 
 import hashlib
 
-from perch_perception.clip_storage import RcloneError, RemoteFile, clip_of
+from perch_perception.data_collection.clip_storage import RcloneError, RemoteFile, clip_of
 
 
 class FakeRclone:

@@ -1,9 +1,9 @@
 """Keep recorded clips on Google Drive.
 
-    python -m perch_perception.clip_storage upload --domain indoor
-    python -m perch_perception.clip_storage download --domain indoor NAME [NAME ...]
-    python -m perch_perception.clip_storage download --domain indoor --missing
-    python -m perch_perception.clip_storage cleanup --domain indoor [--yes]
+    python -m perch_perception.data_collection.clip_storage upload --domain indoor
+    python -m perch_perception.data_collection.clip_storage download --domain indoor NAME ...
+    python -m perch_perception.data_collection.clip_storage download --domain indoor --missing
+    python -m perch_perception.data_collection.clip_storage cleanup --domain indoor [--yes]
 
 --domain is indoor or outdoor and picks both the local and the Drive folder.
 
@@ -29,7 +29,7 @@ import sys
 import time
 from typing import NamedTuple, Optional
 
-from perch_perception.record import default_folder
+from perch_perception.data_collection.record import domain_folder
 
 CLIP_EXTENSIONS = ('.bag', '.mp4', '.json')
 STILL_WRITING_SECONDS = 60  # a clip changed more recently than this is left alone
@@ -504,7 +504,7 @@ def parse_args(argv=None):
     # The domain fills in whichever folder was not given, so indoor and
     # outdoor clips never share a folder.
     if args.folder is None:
-        args.folder = os.path.join(default_folder(), args.domain)
+        args.folder = domain_folder(args.domain)
     if args.remote is None:
         args.remote = DRIVE_FOLDER + '/' + DOMAINS[args.domain]
     return args

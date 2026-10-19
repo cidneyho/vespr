@@ -15,8 +15,9 @@ perch_perception/
   realsense_source.py   live D435i and .bag replay sources (the only pyrealsense2 import)
   run.py                reads a source end to end and prints a depth summary per frame
   process_source.py     runs a frame source in a child process, so a camera freeze cannot freeze the caller
-  record.py             browser page with a live view and a Record / Stop button
-  clip_storage.py       upload, download and clean up clips on Google Drive (rclone)
+  data_collection/       tools for collecting training data, kept apart from the perception code
+    record.py           browser page with a live view and a Record / Stop button
+    clip_storage.py     upload, download and clean up clips on Google Drive (rclone)
 launch/
   perception.launch.py  starts perception_node
 resource/
@@ -52,28 +53,54 @@ The rows that involve perception are still TBD there:
 ## Recording clips
 
 Record on the Jetson, not on a Mac. On 2026-10-11 a Mac kernel-panicked twice while the
-recorder was streaming from the D435i. Start the recorder on the Jetson and view its page on
-your laptop through an SSH tunnel:
+recorder was streaming from the D435i. The recorder runs on the Jetson, and you control it from a
+Mac: its page, with the live left IR image and a Record / Stop button, opens in the Mac's browser
+through an SSH tunnel.
+
+### Connecting the Mac to the Jetson
+
+| Where | Connection | Jetson address | Internet needed |
+|---|---|---|---|
+| Indoors | Both on the same Wi-Fi | its Wi-Fi address | No |
+| Outdoors | A cable between the Mac and the Jetson | `192.168.55.1` over the Jetson's USB-C port, or `<jetson hostname>.local` over Ethernet | No |
+
+Both outdoor addresses are still to be confirmed on our Jetson.
+
+### Starting a session
 
 ```bash
-# on the Jetson
-python -m perch_perception.record
+# on the Mac: log in to the Jetson and forward the page to the Mac
+ssh -L 8080:localhost:8080 perch@<jetson address>
 
-# on the laptop, in a second terminal
-ssh -N -L 8080:localhost:8080 perch@<jetson address>
+# then, in that ssh session on the Jetson
+tmux new -A -s record          # sudo apt install tmux if it is missing
+python -m perch_perception.data_collection.record --domain outdoor     # or indoor
 ```
 
-Then open http://localhost:8080. The page shows the live left IR image and a Record / Stop
-button. Each clip is saved to `~/vespr_recordings/` (change it with `--out`) as two files
-named by start time, for example `2026-10-10T14-32-05`:
+Then open http://localhost:8080 on the Mac. Nothing is uploaded while you record: once the
+Jetson is back on Wi-Fi, send the clips with `clip_storage upload` (see Google Drive storage).
+
+The recorder runs inside `tmux`, so a dropped ssh connection does not stop it, even in the
+middle of a clip. Log in again with the same `ssh -L` command and run `tmux attach -t record` to
+get its terminal back. Press Ctrl+C there to quit the recorder.
+
+### What a clip is
+
+`--domain` picks the folder, `~/vespr_recordings/indoor` or `~/vespr_recordings/outdoor`, the
+same folders `clip_storage` uploads from. `--out` picks another folder. Each clip is two files
+named by its start time, for example `2026-10-10T14-32-05`:
 
 | File | What it is |
 |---|---|
 | `.bag` | Raw depth and left IR. This is the data, and `run.py --bag` replays it. |
 | `.mp4` | A small grayscale video for watching the clip. Lossy: never use it for training or measurement. |
 
-The default folder is in the home folder on purpose: macOS can sync Desktop and Documents to
-iCloud Drive, and clips are large.
+The names come from the Jetson's clock, and without internet the Jetson cannot set it. The
+recorder prints the clock's time when it starts, so check it then. A clip never replaces an
+earlier one: if the name is taken, the new clip gets `-2`, `-3` and so on.
+
+The folders are in the home folder on purpose: macOS can sync Desktop and Documents to iCloud
+Drive, and clips are large.
 
 The camera restarts when recording starts and stops, and each camera session runs in its own
 process, so expect a pause of about five seconds each time. A `.bag` is uncompressed: about 12 MB per second at 848x480 and 10 fps.
@@ -91,25 +118,23 @@ or `--domain outdoor`, which picks both folders:
 | `outdoor` | `~/vespr_recordings/outdoor` | `VESPR Recordings/Outdoors` |
 
 ```bash
-python -m perch_perception.clip_storage upload --domain indoor              # send finished clips not on the Drive yet
-python -m perch_perception.clip_storage download --domain indoor NAME ...   # fetch named clips
-python -m perch_perception.clip_storage download --domain indoor --missing  # fetch every clip not here yet
-python -m perch_perception.clip_storage cleanup --domain indoor             # list local clips safe to delete
-python -m perch_perception.clip_storage cleanup --domain indoor --yes       # delete them
+python -m perch_perception.data_collection.clip_storage upload --domain indoor              # send finished clips not on the Drive yet
+python -m perch_perception.data_collection.clip_storage download --domain indoor NAME ...   # fetch named clips
+python -m perch_perception.data_collection.clip_storage download --domain indoor --missing  # fetch every clip not here yet
+python -m perch_perception.data_collection.clip_storage cleanup --domain indoor             # list local clips safe to delete
+python -m perch_perception.data_collection.clip_storage cleanup --domain indoor --yes       # delete them
 ```
 
-Record straight into the matching folder with the recorder's `--out`, for example
-`python -m perch_perception.record --out ~/vespr_recordings/indoor`. Clips in the recorder's
-default `~/vespr_recordings` are in neither domain, so move them into one before uploading.
+The recorder's `--domain` saves clips straight into these folders, so they are ready to upload.
 
-Run `upload` on the Jetson after a recording session, when it is online. Re-running it is
-always safe: it only sends what is still missing. A session's clips can take a long time over
-Wi-Fi, so when you start it over ssh, run it inside `tmux` (`sudo apt install tmux` if it is
-missing): start `tmux`, then the command, and after a dropped connection ssh back in and run
-`tmux attach`. Otherwise the upload stops when the ssh connection drops. A clip changed in the last minute is skipped
-as still being written. Nothing on the Drive is ever overwritten or deleted. `cleanup` deletes a
-local clip only when every one of its files is on the Drive with a matching checksum. `--folder`
-and `--remote` change the local folder and the Drive location.
+Run `upload` on the Jetson after a recording session, when it is online. Re-running it is always
+safe: it only sends what is still missing. A session's clips can take a long time over Wi-Fi, so
+when you start it over ssh, run it inside `tmux` (`sudo apt install tmux` if it is missing): start
+`tmux`, then the command, and after a dropped connection ssh back in and run `tmux attach`.
+Otherwise the upload stops when the ssh connection drops. A clip changed in the last minute is
+skipped as still being written. Nothing on the Drive is ever overwritten or deleted. `cleanup`
+deletes a local clip only when every one of its files is on the Drive with a matching checksum.
+`--folder` and `--remote` change the local folder and the Drive location.
 
 Teammates don't need any of this: the folder is shared with them, and they download clips in the
 browser.

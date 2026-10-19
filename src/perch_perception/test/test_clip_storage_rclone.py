@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from perch_perception import clip_storage
+from perch_perception.data_collection import clip_storage
 
 pytestmark = pytest.mark.skipif(shutil.which('rclone') is None, reason='rclone is not installed')
 

@@ -13,7 +13,7 @@ import time
 import pytest
 
 from fake_rclone import FakeRclone
-from perch_perception import clip_storage
+from perch_perception.data_collection import clip_storage
 
 NOW = time.time()
 OLD = NOW - 3600  # an hour ago: a clip that finished long ago
@@ -456,14 +456,16 @@ def test_options_can_follow_the_command():
     assert (args.folder, args.remote) == ('/clips', '/drive')
 
 
-def test_the_domain_picks_the_local_folder_and_the_drive_folder():
+def test_the_domain_picks_the_local_folder_and_the_drive_folder(monkeypatch):
+    monkeypatch.delenv('SUDO_USER', raising=False)
+
     indoor = clip_storage.parse_args(['upload', '--domain', 'indoor'])
     outdoor = clip_storage.parse_args(['upload', '--domain', 'outdoor'])
 
     assert indoor.remote == 'vespr-drive:VESPR Recordings/Indoors'
     assert outdoor.remote == 'vespr-drive:VESPR Recordings/Outdoors'
-    assert indoor.folder == os.path.join(clip_storage.default_folder(), 'indoor')
-    assert outdoor.folder == os.path.join(clip_storage.default_folder(), 'outdoor')
+    assert indoor.folder == os.path.expanduser('~/vespr_recordings/indoor')
+    assert outdoor.folder == os.path.expanduser('~/vespr_recordings/outdoor')
 
 
 def test_the_domain_is_required():
