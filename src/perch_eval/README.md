@@ -55,12 +55,72 @@ printed at startup and recorded in the sidecar as `global_time_enabled`. Every `
 then in `hardware_clock`.
 
 The frame metadata `frame_timestamp` is unsupported for motion frames on the Jetson's build, so
-`hw_timestamp_us` is blank there. That is expected and not warned about. Rates, drops and the
-drift fit all come from `ts_ms`.
+`hw_timestamp_us` is blank there. That is expected and not warned about. The rates, clock
+discontinuities and drift fit come from `ts_ms`; dropped frames come from `frame_number`.
 
 If the domain still changes in the middle of a file, the logger prints a warning between lines
 of `!` as soon as it sees it, naming the stream and the CSV line, and repeats it in the final
-report. Rates and drift are then computed from the last stretch in one domain only.
+report. The step between the two clocks is not counted as an interval, and the drift fit uses
+one stretch in one domain (see below).
+
+### Drops, clock discontinuities and the rate
+
+These are three separate things, per stream:
+
+- **Dropped frames** are gaps in `frame_number`, and nothing else. That is the authoritative
+  count.
+- **Clock discontinuities** are steps in `ts_ms` outside 0.5 to 1.5 times the median period:
+  a jump forward, a step back, or a repeat. The band is set from the period at `--rate` until a
+  stream has 10 intervals, then from the median so far. Each one is recorded with its CSV line,
+  `frame_number`, size, how many seconds into the log it came (by `host_ns`) and how many frames
+  were missing across it. One in the first second of logging is the startup clock jump (below)
+  and is only noted. Any later one is printed between lines of `!` as soon as it is seen and is
+  a warning in the final report. A dropped frame also shows up as a discontinuity, with its
+  missing frames counted.
+- **The rate** is 1 / the median interval between consecutive `ts_ms`. It is warned about when
+  it is more than 2 % from `--rate`.
+
+A clock discontinuity or a domain change starts a new segment. The drift fit of `host_ns`
+against `ts_ms` is over the longest segment only, and the report says which one: its CSV lines,
+`frame_number` range, samples and length. `host_ns` is never the time base: it is when the
+callback ran, which jitters by up to 22 ms on the Jetson.
+
+`ts_ms` is not unwrapped. There is no evidence that the camera clock wraps, and unwrapping could
+only add errors. If it ever does wrap, that shows up as a clock discontinuity.
+
+### Known behaviour of this unit (D435i, serial 348522076012)
+
+Measured on 2026-10-20 in the second 60 s dry run on the Jetson, with global time off:
+
+- accel runs at **203.2 Hz** (period 4.920 to 4.924 ms) and gyro at **200.5 Hz** (4.987 to
+  4.989 ms), with 200 Hz requested. The rates are off by a fixed amount, and the intervals are
+  very regular. Both are within the 2 % tolerance, so they are not warned about. The analysis
+  should take the period from the data, not from `--rate`.
+- `ts_ms` jumps forward once per stream by about 41.2 s within the first 30 ms after the sensor
+  starts: at accel sample 5 and gyro sample 6. `frame_number` has no gap there, so no samples
+  are missing; the camera clock steps. The earlier version of the logger read this one jump as
+  8245 dropped samples, a rate of 120 Hz and a meaningless drift fit.
+
+The warm-up discards the jump: it happens in the first milliseconds of streaming, long before
+logging starts. A dry run (`--warmup 0`) logs it, and the report notes it as the expected
+startup jump.
+
+### Temperatures
+
+The D435i's IMU has no temperature reading of its own. The nearest proxies are the depth
+module's `asic_temperature` and `projector_temperature`. At startup the logger asks every
+sensor for its supported options and prints which sensor offers each `*_temperature` option,
+for example `temperature asic_temperature on Stereo Module, ...`. The list is also in the
+sidecar as `temperature_options`. Only the offered ones are shown in the status lines; if no
+sensor offers any, the startup line says so and the status lines leave temperatures out.
+
+If a read fails, the reading shows as `n/a` and the reason librealsense gave is printed once,
+starting `warning   could not read`. librealsense may refuse these options unless the
+depth sensor is streaming, so without `--depth` they can read `n/a`.
+
+The second dry run printed `n/a` for both even with `--depth`. Earlier versions read them only
+from the depth sensor and dropped the error, so why is not known yet. The next run will show
+which sensor offers them and why the read fails.
 
 pyrealsense2 is only imported when the camera is opened, from the folder given by
 `--librealsense`. On the Jetson, librealsense 2.58.4 is built from source and not installed,
@@ -85,12 +145,15 @@ python3 -m perch_eval.imu_log --dry-run --depth
 Before trusting an overnight run, check that the report shows:
 
 - `global time enabled ... = Motion Module 0.0, Stereo Module 0.0` at startup
-- both streams at about 200 Hz and `ts_domain hardware_clock`
-- 0 dropped samples, and no warning that `ts_domain` changed
+- both streams within 2 % of 200 Hz (this unit: 203.2 and 200.5 Hz) and `ts_domain hardware_clock`
+- 0 dropped frames, and no warning that `ts_domain` changed
+- at most one clock discontinuity per stream, the startup jump, noted as expected; any
+  warning about a later one needs looking into
 - that `motion correction` reads 1 at startup, and that the `.json` sidecar has the motion
   intrinsics: together they record that the calibration from 2026-10-20 was applied
-- that the asic and projector temperatures show numbers, not `n/a`
-- a drift slope of a few tens of ppm or less
+- the `temperature` line at startup, and whether the status lines show numbers (see
+  [Temperatures](#temperatures))
+- a drift slope of a few tens of ppm or less, over a segment covering almost the whole minute
 
 Record how the camera is mounted with `--note`, for example
 `--note "vise on the bench, lens facing the wall, USB to the left"`.
@@ -180,9 +243,9 @@ CSV columns:
 | Column | Meaning |
 |---|---|
 | `stream` | `accel` or `gyro` |
-| `frame_number` | librealsense's frame counter for that stream. Gaps are reported as a cross-check on the drops found in `ts_ms`. |
+| `frame_number` | librealsense's frame counter for that stream. Gaps in it are the dropped frames. |
 | `hw_timestamp_us` | the frame metadata `frame_timestamp`, in microseconds. Blank when the metadata is unsupported, which it is for motion frames on the Jetson's build. |
-| `ts_ms` | `frame.get_timestamp()`, in milliseconds, in the domain given by the next column. With global time off this is the camera clock. Raw: if it is a 32-bit microsecond counter it wraps every 71.6 minutes. |
+| `ts_ms` | `frame.get_timestamp()`, in milliseconds, in the domain given by the next column. With global time off this is the camera clock. Raw, including the startup clock jump. |
 | `ts_domain` | `hardware_clock` expected; `global_time` or `system_time` means the clock was not the camera's |
 | `host_ns` | `time.time_ns()` when the callback ran. This is the wall clock, so an NTP step during the run shows up here. |
 | `x`, `y`, `z` | the reading in librealsense's units and axes: rad/s for gyro, m/s² for accel |
@@ -190,17 +253,21 @@ CSV columns:
 Accel and gyro are not merged, paired or interpolated. That is a decision for the analysis.
 
 Each status line shows the time since logging started; for each stream, the sample count, the
-rate over the last minute measured from `ts_ms`, and the dropped samples so far; then
-the queue depth and the depth sensor's `asic_temperature` and `projector_temperature`. The
-D435i's IMU has no temperature reading of its own, so these two are the nearest proxy. A queue
-depth that keeps growing means the disk cannot keep up.
+rate over the last minute (1 / the median `ts_ms` interval), the dropped frames so far, and the
+clock discontinuities so far with the CSV line, frame number and size of the last one; then the
+queue depth and the temperatures (see [Temperatures](#temperatures)). A queue depth that keeps
+growing means the disk cannot keep up.
 
-The final report gives the duration and, for each stream, the samples, the mean rate from
-`ts_ms`, the dropped samples, the `ts_domain`, and a linear fit of `host_ns` against `ts_ms`
-(both in seconds): the slope, minus 1, is the drift between the host clock and the camera clock
-in ppm, and the residual is the rms jitter around that line in microseconds. A dropped sample is
-an interval in `ts_ms` longer than 1.5 periods at `--rate`. Then the file path and size, and
-warnings for anything that looks wrong.
+The final report gives the duration and, for each stream, the samples, the rate and median
+period, the dropped frames, the clock discontinuities and the `ts_domain`. A startup clock
+jump gets a `note` line. Then a linear fit of `host_ns` against `ts_ms` (both in seconds) over
+the longest segment, and which segment that was: the slope, minus 1, is the drift between the
+host clock and the camera clock in ppm, and the residual is the rms jitter around that line in
+microseconds. Then the file path and size, and warnings for anything that looks wrong.
+
+The sidecar's `report.streams` has the same per stream: `rate_hz`, `measured_period_us`,
+`dropped`, `clock_discontinuities` (each with `line`, `frame_number`, `step_ms`,
+`frames_missing`, `seconds_into_log` and `startup`), `segments` and `drift_segment`.
 
 ## Test
 
@@ -226,5 +293,10 @@ does not import pyrealsense2.
 
 One 60 s dry run on the Jetson with `--depth`: 12180 accel and 12011 gyro samples, 0 dropped,
 `hw_timestamp_us` blank throughout, and `ts_domain` switching from `hardware_clock` to
-`global_time` after about 13 samples. That run led to turning off global time. The version that
-does so has not yet been run on the camera.
+`global_time` after about 13 samples. That run led to turning off global time.
+
+A second 60 s dry run on 2026-10-20, with global time off: no gaps in `frame_number` on either
+stream, and `ts_ms` in `hardware_clock` with the rates and startup jump described under
+[Known behaviour of this unit](#known-behaviour-of-this-unit-d435i-serial-348522076012). The
+asic and projector temperatures read `n/a`. That run led to the drop, discontinuity, rate and
+temperature changes above, which have not yet been run on the camera.
