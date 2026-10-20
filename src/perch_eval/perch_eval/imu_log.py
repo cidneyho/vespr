@@ -48,11 +48,22 @@ Sample = namedtuple('Sample', CSV_FIELDS)
 STATUS_INTERVAL = 60  # seconds between status lines
 FLUSH_INTERVAL = 1.0  # seconds between flushes of the CSV to disk
 
-# The hardware timestamp may be a 32-bit microsecond counter, which wraps
-# every 71.6 minutes. Rates and the drift fit unwrap it; the CSV keeps the
-# raw value. A wider counter never goes backwards by half this span, so
+# ts_ms is wanted in the hardware_clock domain: the camera's own clock, in
+# milliseconds with microsecond resolution. librealsense's default domain,
+# global_time, maps it onto the host clock, and on the Jetson the first
+# samples came in hardware_clock before it switched over. So
+# global_time_enabled is set to 0 on the sensors before they start.
+HARDWARE_CLOCK = 'hardware_clock'
+
+# The camera clock may be a 32-bit microsecond counter, which wraps every
+# 71.6 minutes. Rates and the drift fit unwrap ts_ms; the CSV keeps the raw
+# value. A wider counter never goes backwards by half this span, so
 # unwrapping leaves it alone.
-HW_TIMESTAMP_BITS = 32
+TS_COUNTER_BITS = 32
+
+# An interval between two samples longer than this many periods at --rate
+# counts as dropped samples: round(interval / period) - 1 of them.
+DROP_GAP_PERIODS = 1.5
 
 DEPTH_WIDTH = 848
 DEPTH_HEIGHT = 480
@@ -208,69 +219,89 @@ class LinearFit:
 
 
 class StreamStats:
-    """Running counts, rates, drops and clock drift for one stream."""
+    """Running counts, rates, drops and clock drift for one stream.
 
-    def __init__(self):
+    Rates, drops and the drift fit come from ts_ms, which only means one
+    thing within one ts_domain. When the domain changes, the change is
+    recorded in domain_changes and the timing starts over from that sample,
+    so the rates and drift describe the last stretch in a single domain.
+    Counts, drops and frame-number gaps cover the whole file.
+    """
+
+    def __init__(self, rate):
+        self.period_us = 1e6 / rate
         self.count = 0
-        self.drops = DropCounter()
+        self.frame_gaps = DropCounter()  # from frame_number, a cross-check
         self.missing_hw = 0
-        self._unwrap = Unwrapper(HW_TIMESTAMP_BITS)
-        self.hw_count = 0  # samples that carried hw_timestamp_us
-        self.first_hw = None  # unwrapped, microseconds
-        self.last_hw = None
-        self.first_ts = None  # ts_ms
+        self.domain = None
+        self.domain_changes = []  # dicts: line, frame_number, from, to
+        self.dropped = 0  # from gaps in ts_ms, within each domain
+        self.ts_backwards = 0
+        self._restart()
+
+    def _restart(self):
+        self._unwrap = Unwrapper(TS_COUNTER_BITS)
+        self.timed = 0  # samples in the current domain
+        self.first_ts = None  # unwrapped ts_ms, in microseconds
         self.last_ts = None
-        # host_ns - hw_timestamp_us against hw time, both relative to the
-        # first sample: x in seconds, y in nanoseconds.
+        # host_ns - ts_ms against ts_ms, both in seconds and relative to the
+        # first sample. The slope of that is the slope of host_ns against
+        # ts_ms minus 1, so the fit works on the small part that matters.
         self.drift = LinearFit()
         self._origin = None
-        self._mark = None  # (hw_count, last_hw) at the last status line
+        self._mark = None  # (timed, last_ts) at the last status line
 
-    def add(self, sample):
+    def add(self, sample, line=None):
+        """Add one sample; line is its line number in the CSV, for warnings."""
         self.count += 1
-        self.drops.add(sample.frame_number)
-        if self.first_ts is None:
-            self.first_ts = sample.ts_ms
-        self.last_ts = sample.ts_ms
+        self.frame_gaps.add(sample.frame_number)
         if sample.hw_timestamp_us is None:
             self.missing_hw += 1
-            return
-        hw = self._unwrap(sample.hw_timestamp_us)
-        offset_ns = sample.host_ns - hw * 1000
+        if self.domain is not None and sample.ts_domain != self.domain:
+            self.domain_changes.append({
+                'line': line, 'frame_number': sample.frame_number,
+                'from': self.domain, 'to': sample.ts_domain})
+            self._restart()
+        self.domain = sample.ts_domain
+
+        ts = self._unwrap(round(sample.ts_ms * 1000))
+        if self.last_ts is not None:
+            interval = ts - self.last_ts
+            if interval <= 0:
+                self.ts_backwards += 1
+            elif interval > DROP_GAP_PERIODS * self.period_us:
+                self.dropped += round(interval / self.period_us) - 1
         if self._origin is None:
-            self._origin = (hw, offset_ns)
-            self.first_hw = hw
-        self.hw_count += 1
-        self.last_hw = hw
-        self.drift.add(
-            (hw - self._origin[0]) / 1e6, float(offset_ns - self._origin[1]))
+            self._origin = (ts, sample.host_ns)
+            self.first_ts = ts
+        self.timed += 1
+        self.last_ts = ts
+        x = (ts - self._origin[0]) / 1e6
+        host = (sample.host_ns - self._origin[1]) / 1e9
+        self.drift.add(x, host - x)
 
     def mean_rate(self):
-        """Mean rate in Hz from hw_timestamp_us, None without two of them."""
-        return _rate(self.hw_count - 1, self.first_hw, self.last_hw, 1e6)
-
-    def mean_rate_ts(self):
-        """Mean rate in Hz from ts_ms, a cross-check on the hardware clock."""
-        return _rate(self.count - 1, self.first_ts, self.last_ts, 1e3)
+        """Mean rate in Hz from ts_ms, None without two samples."""
+        return _rate(self.timed - 1, self.first_ts, self.last_ts, 1e6)
 
     def window_rate(self):
-        """Rate in Hz from hw_timestamp_us since the last call."""
+        """Rate in Hz from ts_ms since the last call."""
         if self._mark is None:
             rate = self.mean_rate()
         else:
-            count, hw = self._mark
-            rate = _rate(self.hw_count - count, hw, self.last_hw, 1e6)
-        if self.last_hw is not None:
-            self._mark = (self.hw_count, self.last_hw)
+            count, ts = self._mark
+            rate = _rate(self.timed - count, ts, self.last_ts, 1e6)
+        if self.last_ts is not None:
+            self._mark = (self.timed, self.last_ts)
         return rate
 
     def drift_ppm(self):
-        slope = self.drift.slope()  # nanoseconds per second
-        return None if slope is None else slope / 1e3
+        slope = self.drift.slope()  # seconds per second
+        return None if slope is None else slope * 1e6
 
-    def drift_residual_ms(self):
-        residual = self.drift.residual_rms()  # nanoseconds
-        return None if residual is None else residual / 1e6
+    def drift_residual_us(self):
+        residual = self.drift.residual_rms()  # seconds
+        return None if residual is None else residual * 1e6
 
 
 def _rate(intervals, start, end, per_second):
@@ -285,16 +316,18 @@ class Writer:
     put() is the only thing the camera callback calls. Samples that arrived
     before begin() are the warm-up: they are counted and not written.
     stop() writes everything still queued, then flushes the file.
+    rate is the requested rate in Hz, which sets the gap that counts as a drop.
     """
 
-    def __init__(self, file):
+    def __init__(self, file, rate):
+        self._rate = rate
         self._file = file
         self._csv = csv.writer(file)
         self._csv.writerow(CSV_FIELDS)
         self._queue = queue.SimpleQueue()
         self.put = self._queue.put
         self._lock = threading.Lock()
-        self.stats = {name: StreamStats() for name in STREAMS}
+        self.stats = {name: StreamStats(rate) for name in STREAMS}
         self.warmup_samples = 0
         self.written = 0
         self.error = None
@@ -315,11 +348,19 @@ class Writer:
             return {
                 name: {
                     'samples': stats.count,
-                    'dropped': stats.drops.dropped,
+                    'dropped': stats.dropped,
                     'rate': stats.window_rate(),
                 }
                 for name, stats in self.stats.items()
             }
+
+    def domain_changes(self):
+        """Every ts_domain change so far, in the order they were written."""
+        with self._lock:
+            changes = [dict(change, stream=name)
+                       for name, stats in self.stats.items()
+                       for change in stats.domain_changes]
+        return sorted(changes, key=lambda change: change['line'])
 
     def stop(self):
         self._queue.put(_STOP)
@@ -361,8 +402,9 @@ class Writer:
         self.written += 1
         with self._lock:
             if sample.stream not in self.stats:
-                self.stats[sample.stream] = StreamStats()
-            self.stats[sample.stream].add(sample)
+                self.stats[sample.stream] = StreamStats(self._rate)
+            # Line 1 of the CSV is the header.
+            self.stats[sample.stream].add(sample, line=self.written + 1)
 
 
 def format_elapsed(seconds):
@@ -398,35 +440,59 @@ def summarize(stats):
     return {
         name: {
             'samples': s.count,
+            'ts_domain': s.domain,
+            'domain_changes': list(s.domain_changes),
             'mean_rate_hz': s.mean_rate(),
-            'mean_rate_ts_ms_hz': s.mean_rate_ts(),
-            'dropped': s.drops.dropped,
-            'frame_number_backwards': s.drops.backwards,
+            'dropped': s.dropped,
+            'ts_backwards': s.ts_backwards,
+            'frame_number_gaps': s.frame_gaps.dropped,
+            'frame_number_backwards': s.frame_gaps.backwards,
             'missing_hw_timestamp': s.missing_hw,
             'drift_ppm': s.drift_ppm(),
-            'drift_residual_ms': s.drift_residual_ms(),
+            'drift_residual_us': s.drift_residual_us(),
         }
         for name, s in stats.items()
     }
 
 
+def domain_change_text(change):
+    return (f'{change["stream"]}: ts_domain changed from {change["from"]} to '
+            f'{change["to"]} at CSV line {change["line"]} '
+            f'(frame_number {change["frame_number"]})')
+
+
 def check_streams(streams, rate):
-    """Return warnings about anything in the summary that looks wrong."""
+    """Return warnings about anything in the summary that looks wrong.
+
+    A blank hw_timestamp_us is not one: on the Jetson's build the frame
+    metadata is unsupported for motion frames, and ts_ms carries the
+    camera clock instead.
+    """
     warnings = []
     for name in STREAMS:
         s = streams.get(name)
         if s is None or s['samples'] == 0:
             warnings.append(f'{name}: no samples')
             continue
-        if s['missing_hw_timestamp']:
+        for change in s['domain_changes']:
+            warnings.append(domain_change_text(dict(change, stream=name)))
+        if s['domain_changes']:
             warnings.append(
-                f'{name}: {s["missing_hw_timestamp"]} samples without '
-                'hw_timestamp_us (frame metadata unsupported?)')
-        measured = s['mean_rate_hz'] or s['mean_rate_ts_ms_hz']
+                f'{name}: ts_domain is mixed; rates and drift use only the rows from '
+                f'CSV line {s["domain_changes"][-1]["line"]} on')
+        if s['ts_domain'] != HARDWARE_CLOCK:
+            warnings.append(
+                f'{name}: ts_domain is {s["ts_domain"]}, not {HARDWARE_CLOCK}; '
+                'the drift fit is not against the camera clock')
+        measured = s['mean_rate_hz']
         if measured is not None and abs(measured - rate) > RATE_TOLERANCE * rate:
             warnings.append(f'{name}: measured {measured:.2f} Hz, requested {rate} Hz')
         if s['dropped']:
-            warnings.append(f'{name}: {s["dropped"]} dropped frames')
+            warnings.append(f'{name}: {s["dropped"]} dropped samples (gaps in ts_ms)')
+        if s['ts_backwards']:
+            warnings.append(f'{name}: ts_ms did not move forward {s["ts_backwards"]} times')
+        if s['frame_number_gaps']:
+            warnings.append(f'{name}: {s["frame_number_gaps"]} frames missing from frame_number')
         if s['frame_number_backwards']:
             warnings.append(
                 f'{name}: frame number went backwards '
@@ -442,24 +508,23 @@ def report_lines(duration, streams, warnings, csv_path, csv_size, error=None):
             continue
         lines.append(
             f'  {name:<5}     {s["samples"]} samples, '
-            f'mean {_number(s["mean_rate_hz"], 3, " Hz")} '
-            f'(ts_ms: {_number(s["mean_rate_ts_ms_hz"], 3, " Hz")}), '
-            f'{s["dropped"]} dropped')
+            f'mean {_number(s["mean_rate_hz"], 3, " Hz")}, '
+            f'{s["dropped"]} dropped, ts_domain {s["ts_domain"]}')
     for name in STREAMS:
         s = streams.get(name)
         if s is None:
             continue
         lines.append(
-            f'  drift {name:<5} host_ns - hw_timestamp_us: '
+            f'  drift {name:<5} host_ns against ts_ms: '
             f'slope {_number(s["drift_ppm"], 2, " ppm")}, '
-            f'residual {_number(s["drift_residual_ms"], 3, " ms")} rms')
+            f'residual {_number(s["drift_residual_us"], 1, " us")} rms')
     lines.append(f'  file      {csv_path} ({csv_size / 1e6:.1f} MB)')
     if error is not None:
         lines.append(f'  ERROR     {error}')
     for warning in warnings:
         lines.append(f'  WARNING   {warning}')
     if not warnings and error is None:
-        lines.append('  checks    ok: rates within 1 %, no drops, hw timestamps present')
+        lines.append(f'  checks    ok: rates within 1 %, no drops, ts_ms in {HARDWARE_CLOCK} throughout')
     return lines
 
 
@@ -498,6 +563,9 @@ def describe(info):
     ]
     for name, stream in info.get('motion_streams', {}).items():
         lines.append(f'{name:<9} {stream.get("fps")} Hz {stream.get("format")}')
+    if info.get('global_time_enabled'):
+        lines.append('global time enabled (0: ts_ms is the camera clock) = ' + ', '.join(
+            f'{sensor} {value}' for sensor, value in info['global_time_enabled'].items()))
     if info.get('motion_correction') is not None:
         lines.append(f'motion correction (applies the IMU calibration) = {info["motion_correction"]}')
     if info.get('depth_streams'):
@@ -508,12 +576,13 @@ def describe(info):
 
 
 def run_log(camera, folder, warmup, duration, rate, options, stop,
-            clock=datetime.now, status_interval=STATUS_INTERVAL):
+            clock=datetime.now, status_interval=STATUS_INTERVAL, note=None):
     """Warm up, log until duration or stop, then flush and report.
 
     camera is a started-on-demand object with start(on_sample), stop(),
     info() and temperatures(); open_camera returns the real one. stop is a
-    threading.Event: setting it (Ctrl+C) ends the run cleanly. Returns the
+    threading.Event: setting it (Ctrl+C) ends the run cleanly. note is free
+    text for the sidecar, such as how the camera was mounted. Returns the
     path of the CSV.
     """
     os.makedirs(folder, exist_ok=True)
@@ -525,9 +594,12 @@ def run_log(camera, folder, warmup, duration, rate, options, stop,
     status_path = base + '.status.log'
 
     commit, dirty = git_commit()
+    info = camera.info()
     sidecar = {
         'csv': os.path.basename(csv_path),
-        'camera': camera.info(),
+        'note': note,
+        'camera': info,
+        'global_time_enabled': info.get('global_time_enabled'),
         'options': options,
         'hostname': socket.gethostname(),
         'git_commit': commit,
@@ -553,10 +625,24 @@ def run_log(camera, folder, warmup, duration, rate, options, stop,
 
         for line in describe(sidecar['camera']):
             say(line)
+        if note:
+            say(f'note      {note}')
         say(f'writing   {csv_path}')
 
-        writer = Writer(csv_file)
+        writer = Writer(csv_file, rate)
         logging_start = None
+        changes_said = 0
+
+        def say_domain_changes():
+            # Loud, because a change splits the file into two clocks.
+            nonlocal changes_said
+            changes = writer.domain_changes()
+            for change in changes[changes_said:]:
+                say('!' * 72)
+                say(f'WARNING   {domain_change_text(change)}')
+                say('!' * 72)
+            changes_said = len(changes)
+
         try:
             camera.start(writer.put)
 
@@ -590,6 +676,7 @@ def run_log(camera, folder, warmup, duration, rate, options, stop,
                     now = time.monotonic()
                     if now >= end:
                         break
+                    say_domain_changes()
                     if now >= next_line:
                         say(status_line(now - logging_start, writer.snapshot(),
                                         writer.queue_depth(), camera.temperatures()))
@@ -606,6 +693,7 @@ def run_log(camera, folder, warmup, duration, rate, options, stop,
             except Exception as error:
                 say(f'warning: stopping the camera failed: {error}')
             writer.stop()
+            say_domain_changes()
             temperatures = camera.temperatures()
             say(status_line(elapsed, writer.snapshot(), writer.queue_depth(), temperatures))
             streams = summarize(writer.stats)
@@ -678,8 +766,37 @@ class RealSenseImu:
             if self._depth_sensor is None:
                 raise RuntimeError('--depth: the camera has no depth sensor')
             self._depth_profiles = self._depth_stream_profiles(depth_fps)
+        self._global_time = self._disable_global_time()
         self._opened = []
         self._started = []
+
+    def _disable_global_time(self):
+        """Set global_time_enabled to 0, so ts_ms is the camera clock.
+
+        Done before the sensors are opened. The motion sensor must support
+        it; the depth sensor is set too when it does. Returns the values
+        read back, by sensor name, None where the option is unsupported.
+        """
+        option = self._rs.option.global_time_enabled
+        values = {}
+        for sensor, required in ((self._motion, True), (self._depth_sensor, False)):
+            if sensor is None:
+                continue
+            name = sensor.get_info(self._rs.camera_info.name)
+            if not sensor.supports(option):
+                if required:
+                    raise RuntimeError(
+                        f'{name} does not support global_time_enabled, so ts_ms '
+                        'cannot be kept in the hardware_clock domain')
+                values[name] = None
+                continue
+            sensor.set_option(option, 0)
+            value = sensor.get_option(option)
+            if value != 0:
+                raise RuntimeError(
+                    f'{name}: global_time_enabled was set to 0 but reads back {value}')
+            values[name] = value
+        return values
 
     def _find_motion_sensor(self):
         rs = self._rs
@@ -823,6 +940,7 @@ class RealSenseImu:
             'pyrealsense2_file': getattr(rs, '__file__', None),
             'motion_streams': motion_streams,
             'motion_correction': motion_correction,
+            'global_time_enabled': self._global_time,
             'depth_streams': depth_streams,
             'sensor_options': sensors,
         }
@@ -867,6 +985,10 @@ def parse_args(argv=None):
     parser.add_argument(
         '--dry-run', action='store_true',
         help='check the setup: same as --warmup 0 --duration 60')
+    parser.add_argument(
+        '--note', default=None,
+        help='free text written into the .json sidecar, for example how the camera '
+             'was mounted and which way it faced')
     args = parser.parse_args(argv)
     if args.dry_run:
         args.warmup = 0
@@ -889,7 +1011,8 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, on_signal)
 
     camera = open_camera(args.librealsense, args.rate, args.depth, args.depth_fps)
-    run_log(camera, args.out, args.warmup, args.duration, args.rate, vars(args), stop)
+    run_log(camera, args.out, args.warmup, args.duration, args.rate, vars(args), stop,
+            note=args.note)
     return 0
 
 

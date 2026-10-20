@@ -40,6 +40,28 @@ A writer thread drains the queue to disk. If the callback is slow, librealsense 
 The motion streams are requested by stream type and rate only. perch_perception found that
 asking for the `motion_xyz32f` format explicitly failed on the Jetson's build.
 
+### Which clock `ts_ms` is in
+
+`frame.get_timestamp()` reports in the domain librealsense chooses. By default that is
+`global_time`, librealsense's mapping of the camera clock onto the host's epoch milliseconds.
+On the Jetson the first dry run showed the first 13 or so samples in `hardware_clock` (the
+camera's own clock, milliseconds with microsecond resolution) and the rest in `global_time`.
+The jump broke the rate and drift numbers.
+
+So before the sensors start, the logger sets `global_time_enabled` to 0 on the motion sensor
+and, if it supports the option, on the depth sensor, then reads it back. If the motion sensor
+does not support it or it does not read back 0, the logger stops with an error. The values are
+printed at startup and recorded in the sidecar as `global_time_enabled`. Every `ts_ms` is
+then in `hardware_clock`.
+
+The frame metadata `frame_timestamp` is unsupported for motion frames on the Jetson's build, so
+`hw_timestamp_us` is blank there. That is expected and not warned about. Rates, drops and the
+drift fit all come from `ts_ms`.
+
+If the domain still changes in the middle of a file, the logger prints a warning between lines
+of `!` as soon as it sees it, naming the stream and the CSV line, and repeats it in the final
+report. Rates and drift are then computed from the last stretch in one domain only.
+
 pyrealsense2 is only imported when the camera is opened, from the folder given by
 `--librealsense`. On the Jetson, librealsense 2.58.4 is built from source and not installed,
 so the module is not on `PYTHONPATH`. The default folder is `~/librealsense/build/Release`.
@@ -62,14 +84,16 @@ python3 -m perch_eval.imu_log --dry-run --depth
 `--dry-run` means `--warmup 0 --duration 60`: one minute of logging, then the final report.
 Before trusting an overnight run, check that the report shows:
 
-- both streams at about 200 Hz, both by `hw_timestamp_us` and by `ts_ms`
-- 0 dropped frames
-- no warning about missing `hw_timestamp_us` (if the frame metadata is unsupported, that
-  column is blank and only `ts_ms` is left)
+- `global time enabled ... = Motion Module 0.0, Stereo Module 0.0` at startup
+- both streams at about 200 Hz and `ts_domain hardware_clock`
+- 0 dropped samples, and no warning that `ts_domain` changed
 - that `motion correction` reads 1 at startup, and that the `.json` sidecar has the motion
   intrinsics: together they record that the calibration from 2026-10-20 was applied
 - that the asic and projector temperatures show numbers, not `n/a`
 - a drift slope of a few tens of ppm or less
+
+Record how the camera is mounted with `--note`, for example
+`--note "vise on the bench, lens facing the wall, USB to the left"`.
 
 ### The overnight characterization run
 
@@ -134,6 +158,7 @@ At 200 Hz the CSV grows by about 0.2 GB per hour.
 | `--depth-fps FPS` | 30 | depth and IR frame rate with `--depth` |
 | `--out DIR` | `~/vespr_recordings/imu` | folder for the files |
 | `--dry-run` | | `--warmup 0 --duration 60` |
+| `--note TEXT` | none | free text written into the `.json` sidecar: how the camera was mounted and which way it faced |
 
 The output folder is in the home folder for the same reason as perch_perception's clips: macOS
 can sync Desktop and Documents to iCloud Drive, and these files are large.
@@ -146,7 +171,8 @@ Each run writes three files to `--out`, named by the time the program started, f
 | File | What it is |
 |---|---|
 | `.csv` | One row per motion frame, accel and gyro interleaved in arrival order. This is the data. |
-| `.json` | Sidecar: camera serial, firmware, USB type, librealsense version and the file it was loaded from, the chosen streams and the motion intrinsics read from the camera, every sensor option's value at startup, every command-line option, hostname, git commit (and whether the tree had uncommitted changes), the program start, logging start and end times, and the final report. It is written at startup and rewritten when logging starts and when the run ends. |
+| `.json` | Sidecar: camera serial, firmware, USB type, librealsense version and the file it was loaded from, the chosen streams and the motion intrinsics read from the camera, every sensor option's value at startup, the `global_time_enabled` values read back, the
+`--note`, every command-line option, hostname, git commit (and whether the tree had uncommitted changes), the program start, logging start and end times, and the final report. It is written at startup and rewritten when logging starts and when the run ends. |
 | `.status.log` | The startup lines, a warm-up line and a status line every minute, and the final report. |
 
 CSV columns:
@@ -154,26 +180,27 @@ CSV columns:
 | Column | Meaning |
 |---|---|
 | `stream` | `accel` or `gyro` |
-| `frame_number` | librealsense's frame counter for that stream. Gaps are dropped frames. |
-| `hw_timestamp_us` | the camera's own timestamp (frame metadata `frame_timestamp`), in microseconds. Blank if the metadata is unsupported. Raw: if it is a 32-bit counter it wraps every 71.6 minutes. |
-| `ts_ms` | `frame.get_timestamp()`, in milliseconds, in the domain given by the next column |
-| `ts_domain` | `global_time`, `hardware_clock` or `system_time` |
+| `frame_number` | librealsense's frame counter for that stream. Gaps are reported as a cross-check on the drops found in `ts_ms`. |
+| `hw_timestamp_us` | the frame metadata `frame_timestamp`, in microseconds. Blank when the metadata is unsupported, which it is for motion frames on the Jetson's build. |
+| `ts_ms` | `frame.get_timestamp()`, in milliseconds, in the domain given by the next column. With global time off this is the camera clock. Raw: if it is a 32-bit microsecond counter it wraps every 71.6 minutes. |
+| `ts_domain` | `hardware_clock` expected; `global_time` or `system_time` means the clock was not the camera's |
 | `host_ns` | `time.time_ns()` when the callback ran. This is the wall clock, so an NTP step during the run shows up here. |
 | `x`, `y`, `z` | the reading in librealsense's units and axes: rad/s for gyro, m/s² for accel |
 
 Accel and gyro are not merged, paired or interpolated. That is a decision for the analysis.
 
 Each status line shows the time since logging started; for each stream, the sample count, the
-rate over the last minute measured from `hw_timestamp_us`, and the dropped frames so far; then
+rate over the last minute measured from `ts_ms`, and the dropped samples so far; then
 the queue depth and the depth sensor's `asic_temperature` and `projector_temperature`. The
 D435i's IMU has no temperature reading of its own, so these two are the nearest proxy. A queue
 depth that keeps growing means the disk cannot keep up.
 
-The final report gives the duration and, for each stream, the samples, the mean rate (from
-`hw_timestamp_us`, and from `ts_ms` as a cross-check), the dropped frames, and a linear fit of
-`host_ns - hw_timestamp_us` against camera time: the slope is the drift between the host clock
-and the camera clock in ppm, and the residual is the jitter around that line. Then the file path
-and size, and warnings for anything that looks wrong.
+The final report gives the duration and, for each stream, the samples, the mean rate from
+`ts_ms`, the dropped samples, the `ts_domain`, and a linear fit of `host_ns` against `ts_ms`
+(both in seconds): the slope, minus 1, is the drift between the host clock and the camera clock
+in ppm, and the residual is the rms jitter around that line in microseconds. A dropped sample is
+an interval in `ts_ms` longer than 1.5 periods at `--rate`. Then the file path and size, and
+warnings for anything that looks wrong.
 
 ## Test
 
@@ -197,5 +224,7 @@ does not import pyrealsense2.
 
 ## What has been run on real hardware
 
-Nothing yet. The tests use fake frames and a fake camera. The dry run on the Jetson is the
-first run against the D435i.
+One 60 s dry run on the Jetson with `--depth`: 12180 accel and 12011 gyro samples, 0 dropped,
+`hw_timestamp_us` blank throughout, and `ts_domain` switching from `hardware_clock` to
+`global_time` after about 13 samples. That run led to turning off global time. The version that
+does so has not yet been run on the camera.
