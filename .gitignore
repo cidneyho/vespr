@@ -21,3 +21,6 @@ session_notes/
 *.mp4
 data/
 vespr_recordings/
+
+# perception design docs, kept local
+src/perch_perception/docs/

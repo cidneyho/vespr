@@ -1,7 +1,12 @@
 """Record clips from the D435i through a browser page.
 
-    python -m perch_perception.record        # on macOS, run it with sudo
+    python -m perch_perception.data_collection.record --domain indoor
     then open http://localhost:8080
+
+--domain is indoor (the indoor rig) or outdoor (handheld) and picks the clip
+folder, ~/vespr_recordings/indoor or ~/vespr_recordings/outdoor. On macOS,
+run it with sudo. To control a recorder on the Jetson from a Mac, see
+"Recording from the Mac" in the package README.
 
 The page shows the live left IR image and a Record / Stop button. Every clip
 is saved as two files named by its start time:
@@ -31,6 +36,8 @@ from datetime import datetime
 import cv2
 
 from perch_perception.process_source import ProcessSource
+
+DOMAINS = ('indoor', 'outdoor')  # evaluated separately, so their clips are kept apart
 
 PAGE = """<!doctype html>
 <html>
@@ -111,6 +118,27 @@ def default_folder():
     """
     home = os.path.expanduser('~' + os.environ.get('SUDO_USER', ''))
     return os.path.join(home, 'vespr_recordings')
+
+
+def domain_folder(domain):
+    """Return the clip folder of a domain, for example ~/vespr_recordings/indoor."""
+    return os.path.join(default_folder(), domain)
+
+
+def free_clip_name(folder, name):
+    """Return name, or name-2, name-3 and so on if folder already has a clip by that name.
+
+    Clips are named by the clock. Without internet the Jetson cannot set its
+    clock, so a new clip can get the name of an earlier one, and librealsense
+    would write over the earlier .bag.
+    """
+    taken = {os.path.splitext(entry)[0] for entry in os.listdir(folder)}
+    candidate = name
+    number = 1
+    while candidate in taken:
+        number += 1
+        candidate = f'{name}-{number}'
+    return candidate
 
 
 def hand_to_user(path):
@@ -249,8 +277,8 @@ class Recorder:
             self._report(error)
 
     def _record_clip(self):
-        name = clip_name(self._clock())
         os.makedirs(self._folder, exist_ok=True)
+        name = free_clip_name(self._folder, clip_name(self._clock()))
         bag_path = os.path.join(self._folder, name + '.bag')
         video_path = os.path.join(self._folder, name + '.mp4')
         video = None
@@ -385,15 +413,21 @@ def make_server(recorder, port):
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
-        '--out', default=default_folder(),
-        help='folder for the clips (default: vespr_recordings in your home folder)')
+        '--domain', required=True, choices=DOMAINS,
+        help='indoor rig or outdoor handheld clips; picks the clip folder')
+    parser.add_argument(
+        '--out',
+        help='folder for the clips (default: vespr_recordings/<domain> in your home folder)')
     parser.add_argument('--port', type=int, default=8080, help='port of the page')
     parser.add_argument('--width', type=int, default=848)
     parser.add_argument('--height', type=int, default=480)
     parser.add_argument(
         '--fps', type=int, default=None,
         help='default 30 on USB 3 and 10 on USB 2')
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.out is None:
+        args.out = domain_folder(args.domain)
+    return args
 
 
 def main(argv=None):
@@ -410,6 +444,10 @@ def main(argv=None):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f'open http://localhost:{args.port} in your browser')
     print(f'clips are saved to {args.out}')
+    # Clips are named by this clock. A Jetson without internet may have the
+    # wrong time, so show it before anything is recorded.
+    print(f'this computer\'s clock reads {datetime.now():%Y-%m-%d %H:%M}; '
+          'clips are named by it, so check it is right')
     print('press Ctrl+C here to quit')
     try:
         recorder.run()
