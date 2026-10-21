@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>perch_eval</name>
+  <version>0.0.0</version>
+  <description>Ground-truth and evaluation tooling for the VESPR perching drone, starting with D435i IMU characterization.</description>
+  <maintainer email="rushavsd@gmail.com">Rushav</maintainer>
+  <license>TODO: License declaration</license>
+
+  <!-- imu_log needs pyrealsense2, which is built from source on the Jetson and
+       found through its --librealsense option, so it is not a rosdep here. -->
+
+  <!-- imu_allan, the analysis script, and its tests. -->
+  <test_depend>python3-numpy</test_depend>
+  <test_depend>python3-pandas</test_depend>
+  <test_depend>python3-matplotlib</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
