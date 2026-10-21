@@ -340,27 +340,56 @@ def test_rate_is_one_over_the_median_period():
     assert stats.rate() == pytest.approx(203.17, abs=0.01)
 
 
-def test_drops_are_gaps_in_frame_number_only():
+def test_a_frame_lost_on_the_host_side_is_counted_both_ways():
     stats = imu_log.StreamStats(200)
     numbers = [0, 1, 2, 5, 6, 7, 11, 12]  # 2 missing after 2, 3 after 7
     for number in numbers:
         stats.add(make_sample(frame_number=number))  # ts_ms follows frame_number
 
     assert stats.frame_gaps.dropped == 2 + 3
-    # The ts_ms steps across the gaps are discontinuities too, and say so.
-    assert [d['frames_missing'] for d in stats.discontinuities] == [2, 3]
+    assert stats.period_gap_samples == 2 + 3
+    assert [(g['periods'], g['frames_missing']) for g in stats.period_gaps] == [(3, 2), (4, 3)]
+    # Whole periods missing are gaps, not clock discontinuities.
+    assert stats.discontinuities == []
+    assert stats.segments == 1
 
 
-def test_a_ts_ms_step_without_a_frame_gap_is_a_discontinuity_not_a_drop():
+def test_a_sample_lost_inside_the_camera_is_a_period_gap_only():
+    # As overnight: ts_ms steps exactly two periods (9.886 ms at a 4.943 ms
+    # period) while frame_number, assigned on the host, has no gap.
     stats = imu_log.StreamStats(200)
-    times = [0, 5, 10, 25, 30, 35.1, 41, 61, 66]
+    ts_us = 0
+    for number in range(400):
+        ts_us += 9886 if number == 300 else 4943
+        stats.add(make_sample(frame_number=number, ts_ms=ts_us / 1000,
+                              host_ns=number * 4_943_000), line=number + 2)
+
+    assert stats.frame_gaps.dropped == 0
+    assert stats.period_gap_samples == 1
+    [gap] = stats.period_gaps
+    assert (gap['line'], gap['frame_number'], gap['periods']) == (302, 300, 2)
+    assert (gap['samples_missing'], gap['frames_missing']) == (1, 0)
+    assert stats.discontinuities == []
+    assert stats.segments == 1
+
+    warnings = imu_log.check_streams(imu_log.summarize({'gyro': stats}), 200)
+    assert ('gyro: 1 sample missing by period gaps (sensor side, from ts_ms), in 1 gap'
+            in warnings)
+    assert not any('frame-number gaps' in w for w in warnings)
+
+
+def test_a_ts_ms_step_that_is_not_whole_periods_is_a_discontinuity():
+    stats = imu_log.StreamStats(200)
+    times = [0, 5, 10, 22.5, 27.5, 32.6, 38.5, 101, 106]
     for number, ts in enumerate(times):
         stats.add(make_sample(frame_number=number, ts_ms=float(ts)), line=number + 2)
 
     assert stats.frame_gaps.dropped == 0
-    # 15 ms and 20 ms are outside 0.5x-1.5x of 5 ms; 5.1 and 5.9 ms are jitter.
+    assert stats.period_gaps == []
+    # 12.5 ms is 2.5 periods and 62.5 ms is more than MAX_GAP_PERIODS;
+    # 5.1 and 5.9 ms are jitter.
     assert [(d['line'], d['frame_number'], d['step_ms']) for d in stats.discontinuities] == [
-        (5, 3, 15.0), (9, 7, 20.0)]
+        (5, 3, 12.5), (9, 7, 62.5)]
     assert stats.segments == 3
 
 
@@ -372,15 +401,74 @@ def test_a_step_backwards_is_a_discontinuity():
     assert [d['step_ms'] for d in stats.discontinuities] == [-3.0]
 
 
-def test_ts_ms_is_not_unwrapped():
+def test_unwrapper_carries_over_a_32_bit_wrap():
+    unwrap = imu_log.Unwrapper(32)
+    span = 1 << 32
+
+    values = [unwrap(v) for v in (span - 2000, span - 1000, 0, 1000)]
+
+    assert values == [span - 2000, span - 1000, span, span + 1000]
+    assert unwrap.wraps == 1
+
+
+def test_unwrapper_ignores_a_step_back_of_half_the_range_or_less():
+    unwrap = imu_log.Unwrapper(32)
+    half = (1 << 32) // 2
+
+    assert [unwrap(v) for v in (half + 5000, 5000, 6000)] == [half + 5000, 5000, 6000]
+    assert unwrap.wraps == 0
+
+
+def test_a_ts_ms_wrap_is_a_wrap_not_a_drop_gap_or_discontinuity():
+    # As overnight: the counter wraps every 4294.967 s, so ts_ms steps back
+    # by 2^32 us less one period.
     stats = imu_log.StreamStats(200)
     wrap_ms = (1 << 32) / 1000
-    for number, ts in enumerate((wrap_ms - 10, wrap_ms - 5, 0.0, 5.0)):
-        stats.add(make_sample(frame_number=number, ts_ms=ts))
+    for number, ts in enumerate((wrap_ms - 9.886, wrap_ms - 4.943, 0.0, 4.943, 9.886)):
+        stats.add(make_sample(frame_number=number, ts_ms=ts, host_ns=number * 4_943_000),
+                  line=number + 2)
 
-    assert len(stats.discontinuities) == 1
-    assert stats.discontinuities[0]['step_ms'] == pytest.approx(-(wrap_ms - 5))
+    [wrap] = stats.wraps
+    assert (wrap['line'], wrap['frame_number']) == (4, 2)
+    assert wrap['step_ms'] == pytest.approx(-(wrap_ms - 4.943))
+    assert stats.discontinuities == []
+    assert stats.period_gaps == []
     assert stats.frame_gaps.dropped == 0
+    assert stats.segments == 1
+    assert stats.period_us() == 4943
+
+    streams = imu_log.summarize({'gyro': stats})
+    assert len(streams['gyro']['wraps']) == 1
+    assert not any('wrap' in w or 'stepped' in w for w in imu_log.check_streams(streams, 200))
+
+
+def test_the_drift_fit_runs_across_wraps():
+    stats = imu_log.StreamStats(200)
+    span = 1 << 32
+    start_us = span - 1_000_000  # 1 s before the counter wraps
+    for i in range(2001):  # 10 s; the host clock runs 50 ppm slow
+        ts_us = i * 5000
+        stats.add(make_sample(frame_number=i, ts_ms=((start_us + ts_us) % span) / 1000,
+                              host_ns=round(ts_us * 1000 * (1 - 50e-6))))
+
+    assert len(stats.wraps) == 1
+    assert stats.segments == 1
+    drift = stats.longest_segment().summary(stats.segments)
+    assert drift['samples'] == 2001
+    assert drift['drift_ppm'] == pytest.approx(-50.0, rel=1e-3)
+
+
+def test_a_switch_of_clocks_is_never_a_wrap():
+    stats = imu_log.StreamStats(200)
+    # global_time is host epoch milliseconds, far above 2^32 us; back to the
+    # camera clock is a step back of more than half the range.
+    for number, (ts, domain) in enumerate((
+            (100.0, 'hardware_clock'), (1_792_529_380_000.0, 'global_time'),
+            (1_792_529_380_005.0, 'global_time'), (115.0, 'hardware_clock'))):
+        stats.add(make_sample(frame_number=number, ts_ms=ts, domain=domain))
+
+    assert stats.wraps == []
+    assert len(stats.domain_changes) == 2
 
 
 def test_the_drift_fit_uses_the_longest_segment():
@@ -507,7 +595,8 @@ def test_a_startup_clock_jump_is_one_discontinuity_and_no_drops():
     streams = imu_log.summarize(writer.stats)
     for name, rate, jump_at in (('accel', 203.2, 5), ('gyro', 200.5, 6)):
         s = streams[name]
-        assert s['dropped'] == 0
+        assert s['frame_number_gaps'] == s['period_gaps'] == 0
+        assert s['wraps'] == []
         assert s['rate_hz'] == pytest.approx(rate, abs=0.05)
         [jump] = s['clock_discontinuities']
         assert jump['frame_number'] == jump_at
@@ -537,14 +626,14 @@ def test_a_startup_clock_jump_is_one_discontinuity_and_no_drops():
 
 def test_a_discontinuity_after_the_first_second_is_a_warning():
     stats = imu_log.StreamStats(200)
-    for i in range(400):  # 2 s, with a 40 ms jump at 1.5 s
-        ts_ms = i * 5.0 + (40.0 if i >= 300 else 0.0)
+    for i in range(400):  # 2 s, with a 42.5 ms jump at 1.5 s
+        ts_ms = i * 5.0 + (42.5 if i >= 300 else 0.0)
         stats.add(make_sample(frame_number=i, ts_ms=ts_ms, host_ns=i * 5_000_000), line=i + 2)
 
     [jump] = stats.discontinuities
     assert not jump['startup']
     warnings = imu_log.check_streams(imu_log.summarize({'gyro': stats}), 200)
-    assert ('gyro: ts_ms stepped +45.000 ms at CSV line 302 (frame_number 300), '
+    assert ('gyro: ts_ms stepped +47.500 ms at CSV line 302 (frame_number 300), '
             '1.500 s into the log') in warnings
 
 
@@ -571,23 +660,31 @@ def test_missing_hardware_timestamps_are_not_a_warning():
 def test_status_line_shows_every_field():
     jump = {'line': 12, 'frame_number': 5, 'step_ms': 41_200.0}
     streams = {
-        'accel': {'samples': 12000, 'dropped': 0, 'rate': 203.17, 'discontinuities': [jump]},
-        'gyro': {'samples': 11990, 'dropped': 3, 'rate': None, 'discontinuities': []},
+        'accel': {'samples': 12000, 'frame_number_gaps': 0, 'period_gaps': 2, 'wraps': 1,
+                  'rate': 203.17, 'discontinuities': [jump]},
+        'gyro': {'samples': 11990, 'frame_number_gaps': 3, 'period_gaps': 0, 'wraps': 0,
+                 'rate': None, 'discontinuities': []},
     }
 
     line = imu_log.status_line(3725, streams, 4, {'asic': 41.0, 'projector': None})
 
     assert line == (
-        '01:02:05 | accel 12000 samples, 203.17 Hz, 0 dropped, 1 clock discontinuity '
-        '(last: line 12, frame 5, +41.200 s) | '
-        'gyro 11990 samples, n/a, 3 dropped, 0 clock discontinuities | queue 4 | '
-        'asic 41.0 C, projector n/a')
+        '01:02:05 | accel 12000 samples, 203.17 Hz, missing 0 by frame number, 2 by period, '
+        '1 wrap, 1 clock discontinuity (last: line 12, frame 5, +41.200 s) | '
+        'gyro 11990 samples, n/a, missing 3 by frame number, 0 by period, 0 wraps, '
+        '0 clock discontinuities | queue 4 | asic 41.0 C, projector n/a')
 
 
 def test_status_line_leaves_out_temperatures_nobody_offers():
     line = imu_log.status_line(0, {}, 0, {})
 
     assert line.endswith('| queue 0')
+
+
+def test_status_line_says_when_the_depth_sensor_is_not_streaming():
+    line = imu_log.status_line(0, {}, 0, None)
+
+    assert line.endswith('| queue 0 | temperature not streaming')
 
 
 # A whole run against a fake camera
@@ -679,6 +776,55 @@ def test_run_log_writes_the_tail_and_the_sidecar(tmp_path):
     assert 'ts_domain changed' not in status
     assert 'clock discontinuities' in status
     assert status.count('warning   could not read projector_temperature from Stereo Module') == 1
+
+
+class DepthStreamingCamera(FakeCamera):
+    """Temperatures read only while streaming, like RealSenseImu with --depth."""
+
+    started = False
+
+    def start(self, on_sample):
+        self.started = True
+        super().start(on_sample)
+
+    def temperatures(self):
+        return {'asic': 40.0, 'projector': 35.0} if self.started and not self.stopped else None
+
+    def temperature_problems(self):
+        return {}
+
+
+def test_run_log_reads_the_end_temperatures_before_stopping(tmp_path):
+    camera = DepthStreamingCamera()
+
+    path = imu_log.run_log(
+        camera, str(tmp_path), warmup=0, duration=0.3, rate=200, options={},
+        stop=threading.Event(), status_interval=60)
+
+    sidecar = json.loads(open(path[:-len('.csv')] + '.json').read())
+    assert sidecar['report']['end_temperatures'] == {'asic': 40.0, 'projector': 35.0}
+    status = open(path[:-len('.csv')] + '.status.log').read()
+    assert 'asic 40.0 C, projector 35.0 C' in status
+    assert 'not streaming' not in status
+    assert 'could not read' not in status
+
+
+def test_run_log_says_not_streaming_without_the_depth_sensor(tmp_path):
+    class ImuOnlyCamera(FakeCamera):
+        def temperatures(self):
+            return None
+
+        def temperature_problems(self):
+            return {}
+
+    path = imu_log.run_log(
+        ImuOnlyCamera(), str(tmp_path), warmup=0.2, duration=0.3, rate=200, options={},
+        stop=threading.Event(), status_interval=0.1)
+
+    status = open(path[:-len('.csv')] + '.status.log').read()
+    assert 'temperature not streaming' in status
+    assert 'could not read' not in status
+    assert 'asic' not in status
 
 
 def test_run_log_warns_during_the_run_when_the_domain_changes(tmp_path):
@@ -806,22 +952,54 @@ class FakeDevice:
         return self.sensors
 
 
-def test_temperature_options_are_found_on_whichever_sensor_offers_them():
-    camera = camera_with(None, None)
-    camera._device = FakeDevice([
-        FakeOptionSensor('Stereo Module', ['exposure', 'asic_temperature'],
-                         fails=['asic_temperature']),
-        FakeOptionSensor('Motion Module', ['enable_motion_correction',
-                                           'projector_temperature']),
-    ])
+def camera_with_temperatures(fails=()):
+    """A camera whose depth sensor offers asic_temperature and whose motion
+    sensor offers projector_temperature, with nothing started."""
+    depth = FakeOptionSensor('Stereo Module', ['exposure', 'asic_temperature'], fails=fails)
+    motion = FakeOptionSensor('Motion Module', ['enable_motion_correction',
+                                                'projector_temperature'])
+    camera = camera_with(motion, depth)
+    camera._device = FakeDevice([depth, motion])
     camera._temperature_options = camera._find_temperature_options()
     camera._temperature_problems = {}
+    camera._started = []
+    return camera
+
+
+def test_temperature_options_are_found_on_whichever_sensor_offers_them():
+    camera = camera_with_temperatures(fails=['asic_temperature'])
+    camera._started = [camera._depth_sensor]
 
     assert {name: entry[2] for name, entry in camera._temperature_options.items()} == {
         'asic': 'Stereo Module', 'projector': 'Motion Module'}
     assert camera.temperatures() == {'asic': None, 'projector': 42.0}
     assert camera.temperature_problems() == {
         'asic': 'asic_temperature from Stereo Module: query is available during streaming only'}
+
+
+def test_temperatures_are_only_read_while_the_depth_sensor_streams():
+    # Overnight they read fine for 8 h and failed only before the depth
+    # sensor started and after it stopped.
+    camera = camera_with_temperatures(fails=['asic_temperature', 'projector_temperature'])
+
+    assert camera.temperatures() is None  # before start
+    camera._started = [camera._motion]
+    assert camera.temperatures() is None  # IMU only, as without --depth
+    assert camera.temperature_problems() == {}
+
+    camera._started = [camera._depth_sensor, camera._motion]
+    camera._depth_sensor.fails = camera._motion.fails = ()
+    assert camera.temperatures() == {'asic': 42.0, 'projector': 42.0}
+
+
+def test_sensor_options_leave_the_temperatures_unread_unless_streaming():
+    sensor = FakeOptionSensor('Stereo Module', ['exposure', 'asic_temperature'],
+                              fails=['asic_temperature'])
+
+    assert imu_log._sensor_options(sensor, read_temperatures=False) == {
+        'exposure': 42.0, 'asic_temperature': 'not streaming'}
+    assert imu_log._sensor_options(sensor, read_temperatures=True)['asic_temperature'].startswith(
+        'unreadable')
 
 
 def test_startup_lines_say_which_sensor_offers_the_temperatures():

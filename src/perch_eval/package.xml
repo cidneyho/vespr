@@ -10,6 +10,10 @@
   <!-- imu_log needs pyrealsense2, which is built from source on the Jetson and
        found through its --librealsense option, so it is not a rosdep here. -->
 
+  <!-- imu_allan, the analysis script, and its tests. -->
+  <test_depend>python3-numpy</test_depend>
+  <test_depend>python3-pandas</test_depend>
+  <test_depend>python3-matplotlib</test_depend>
   <test_depend>python3-pytest</test_depend>
 
   <export>

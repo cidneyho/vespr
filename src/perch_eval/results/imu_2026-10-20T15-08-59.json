@@ -1,0 +1,497 @@
+{
+  "csv": "imu_2026-10-20T15-08-59.csv",
+  "note": "overnight Allan run 1: lens-up on back, taped to steel plate, solid table, room undisturbed; depth+IR streaming for thermal state",
+  "camera": {
+    "name": "RealSense D435I",
+    "serial": "348522076012",
+    "firmware": "5.15.1.55",
+    "usb_type": "3.2",
+    "librealsense_version": "2.58.4",
+    "pyrealsense2_file": "/home/perch/librealsense/build/Release/pyrealsense2.cpython-312-aarch64-linux-gnu.so",
+    "motion_streams": {
+      "accel": {
+        "fps": 200,
+        "format": "motion_xyz32f",
+        "intrinsics": {
+          "data": [
+            [
+              1.0072112083435059,
+              -0.022132573649287224,
+              0.0037890097592025995,
+              0.014026840217411518
+            ],
+            [
+              0.021502899006009102,
+              1.006746768951416,
+              -0.0001559144293423742,
+              -0.14629636704921722
+            ],
+            [
+              -0.015757527202367783,
+              0.017817934975028038,
+              1.0046991109848022,
+              -0.08111963421106339
+            ]
+          ],
+          "noise_variances": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "bias_variances": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "gyro": {
+        "fps": 200,
+        "format": "motion_xyz32f",
+        "intrinsics": {
+          "data": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              -5.6251668866025284e-05
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              -5.4884309065528214e-05
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              -2.890447103709448e-05
+            ]
+          ],
+          "noise_variances": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "bias_variances": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      }
+    },
+    "motion_correction": 1.0,
+    "global_time_enabled": {
+      "Motion Module": 0.0,
+      "Stereo Module": 0.0
+    },
+    "depth_streams": [
+      {
+        "stream": "depth",
+        "index": 0,
+        "width": 848,
+        "height": 480,
+        "fps": 30,
+        "format": "z16"
+      },
+      {
+        "stream": "infrared",
+        "index": 1,
+        "width": 848,
+        "height": 480,
+        "fps": 30,
+        "format": "y8"
+      }
+    ],
+    "sensor_options": {
+      "Motion Module": {
+        "frames_queue_size": 16.0,
+        "enable_motion_correction": 1.0,
+        "global_time_enabled": 0.0
+      },
+      "Stereo Module": {
+        "exposure": 8500.0,
+        "gain": 16.0,
+        "enable_auto_exposure": 1.0,
+        "visual_preset": 0.0,
+        "laser_power": 150.0,
+        "emitter_enabled": 1.0,
+        "frames_queue_size": 16.0,
+        "asic_temperature": "unreadable: object doesn't support option Asic Temperature",
+        "error_polling_enabled": 1.0,
+        "projector_temperature": "unreadable: object doesn't support option Projector Temperature",
+        "output_trigger_enabled": 0.0,
+        "depth_units": 0.0010000000474974513,
+        "stereo_baseline": 50.00291061401367,
+        "inter_cam_sync_mode": 0.0,
+        "emitter_on_off": 0.0,
+        "global_time_enabled": 0.0,
+        "emitter_always_on": 0.0,
+        "hdr_enabled": 0.0,
+        "sequence_name": 0.0,
+        "sequence_size": 2.0,
+        "sequence_id": 0.0,
+        "auto_exposure_limit": 165000.0,
+        "auto_gain_limit": 248.0,
+        "auto_exposure_limit_toggle": 0.0,
+        "auto_gain_limit_toggle": 0.0
+      }
+    },
+    "temperature_options": {
+      "asic_temperature": "Stereo Module",
+      "projector_temperature": "Stereo Module"
+    }
+  },
+  "global_time_enabled": {
+    "Motion Module": 0.0,
+    "Stereo Module": 0.0
+  },
+  "options": {
+    "librealsense": "/home/perch/librealsense/build/Release",
+    "rate": 200,
+    "duration": 28800.0,
+    "warmup": 1200.0,
+    "depth": true,
+    "depth_fps": 30,
+    "out": "/home/perch/vespr_recordings/imu",
+    "dry_run": false,
+    "note": "overnight Allan run 1: lens-up on back, taped to steel plate, solid table, room undisturbed; depth+IR streaming for thermal state"
+  },
+  "hostname": "perch",
+  "git_commit": "437cddde70ee24a9d00f91c58e27d25c7853c7d3",
+  "git_dirty": false,
+  "python": "3.12.3",
+  "started": "2026-10-20T15:08:59.488220",
+  "logging_started": "2026-10-20T15:29:00.075642",
+  "ended": "2026-10-20T23:29:01.144982",
+  "units": {
+    "gyro": "rad/s",
+    "accel": "m/s^2"
+  },
+  "csv_fields": [
+    "stream",
+    "frame_number",
+    "hw_timestamp_us",
+    "ts_ms",
+    "ts_domain",
+    "host_ns",
+    "x",
+    "y",
+    "z"
+  ],
+  "report": {
+    "duration_s": 28800.000239072997,
+    "streams": {
+      "accel": {
+        "samples": 5827479,
+        "ts_domain": "hardware_clock",
+        "domain_changes": [],
+        "rate_hz": 202.30629172567268,
+        "measured_period_us": 4943.0,
+        "dropped": 0,
+        "frame_number_backwards": 0,
+        "clock_discontinuities": [
+          {
+            "line": 1233972,
+            "frame_number": 863300,
+            "step_ms": -4294962.355,
+            "frames_missing": 0,
+            "seconds_into_log": 3063.038252184,
+            "startup": false
+          },
+          {
+            "line": 1642181,
+            "frame_number": 1068384,
+            "step_ms": 9.884,
+            "frames_missing": 0,
+            "seconds_into_log": 4076.470359871,
+            "startup": false
+          },
+          {
+            "line": 2429465,
+            "frame_number": 1463893,
+            "step_ms": 9.886,
+            "frames_missing": 0,
+            "seconds_into_log": 6031.074961849,
+            "startup": false
+          },
+          {
+            "line": 2963784,
+            "frame_number": 1732307,
+            "step_ms": -4294962.353,
+            "frames_missing": 0,
+            "seconds_into_log": 7357.699549584,
+            "startup": false
+          },
+          {
+            "line": 3722046,
+            "frame_number": 2113215,
+            "step_ms": 9.887,
+            "frames_missing": 0,
+            "seconds_into_log": 9240.357286239,
+            "startup": false
+          },
+          {
+            "line": 4094254,
+            "frame_number": 2300195,
+            "step_ms": 9.885,
+            "frames_missing": 0,
+            "seconds_into_log": 10164.476568291,
+            "startup": false
+          },
+          {
+            "line": 4693472,
+            "frame_number": 2601202,
+            "step_ms": -4294962.354,
+            "frames_missing": 0,
+            "seconds_into_log": 11652.344652008,
+            "startup": false
+          },
+          {
+            "line": 5591794,
+            "frame_number": 3052458,
+            "step_ms": 9.885,
+            "frames_missing": 0,
+            "seconds_into_log": 13882.86142329,
+            "startup": false
+          },
+          {
+            "line": 6195671,
+            "frame_number": 3355808,
+            "step_ms": 9.887,
+            "frames_missing": 0,
+            "seconds_into_log": 15382.251546788,
+            "startup": false
+          },
+          {
+            "line": 6423110,
+            "frame_number": 3470058,
+            "step_ms": -4294962.354,
+            "frames_missing": 0,
+            "seconds_into_log": 15946.974253294,
+            "startup": false
+          },
+          {
+            "line": 6938825,
+            "frame_number": 3729125,
+            "step_ms": 9.885,
+            "frames_missing": 0,
+            "seconds_into_log": 17227.442713414,
+            "startup": false
+          },
+          {
+            "line": 8152861,
+            "frame_number": 4339031,
+            "step_ms": -4294962.353,
+            "frames_missing": 0,
+            "seconds_into_log": 20241.575844004,
+            "startup": false
+          },
+          {
+            "line": 9496378,
+            "frame_number": 5013960,
+            "step_ms": 9.886,
+            "frames_missing": 0,
+            "seconds_into_log": 23577.390505121,
+            "startup": false
+          },
+          {
+            "line": 9690973,
+            "frame_number": 5111719,
+            "step_ms": 9.886,
+            "frames_missing": 0,
+            "seconds_into_log": 24060.525926934,
+            "startup": false
+          },
+          {
+            "line": 9882587,
+            "frame_number": 5207981,
+            "step_ms": -4294962.353,
+            "frames_missing": 0,
+            "seconds_into_log": 24536.263902162,
+            "startup": false
+          },
+          {
+            "line": 10163733,
+            "frame_number": 5349220,
+            "step_ms": 9.883,
+            "frames_missing": 0,
+            "seconds_into_log": 25234.295789108,
+            "startup": false
+          },
+          {
+            "line": 10296152,
+            "frame_number": 5415745,
+            "step_ms": 9.885,
+            "frames_missing": 0,
+            "seconds_into_log": 25563.052041049,
+            "startup": false
+          },
+          {
+            "line": 11433885,
+            "frame_number": 5987335,
+            "step_ms": 9.885,
+            "frames_missing": 0,
+            "seconds_into_log": 28387.675650545,
+            "startup": false
+          }
+        ],
+        "missing_hw_timestamp": 5827479,
+        "segments": 19,
+        "drift_segment": {
+          "index": 13,
+          "of": 19,
+          "ts_domain": "hardware_clock",
+          "first_line": 8152861,
+          "last_line": 9496375,
+          "first_frame_number": 4339031,
+          "last_frame_number": 5013959,
+          "samples": 674929,
+          "duration_s": 3336.005476,
+          "drift_ppm": -49.96058200826894,
+          "drift_residual_us": 9251.367099703375
+        },
+        "drift_ppm": -49.96058200826894,
+        "drift_residual_us": 9251.367099703375
+      },
+      "gyro": {
+        "samples": 5772490,
+        "ts_domain": "hardware_clock",
+        "domain_changes": [],
+        "rate_hz": 200.40080160320642,
+        "measured_period_us": 4990.0,
+        "dropped": 0,
+        "frame_number_backwards": 0,
+        "clock_discontinuities": [
+          {
+            "line": 1233973,
+            "frame_number": 854513,
+            "step_ms": -4294962.306,
+            "frames_missing": 0,
+            "seconds_into_log": 3063.041539,
+            "startup": false
+          },
+          {
+            "line": 1521054,
+            "frame_number": 997364,
+            "step_ms": 9.979,
+            "frames_missing": 0,
+            "seconds_into_log": 3775.759240302,
+            "startup": false
+          },
+          {
+            "line": 2963783,
+            "frame_number": 1715317,
+            "step_ms": -4294962.306,
+            "frames_missing": 0,
+            "seconds_into_log": 7357.696331554,
+            "startup": false
+          },
+          {
+            "line": 2996233,
+            "frame_number": 1731466,
+            "step_ms": 9.979,
+            "frames_missing": 0,
+            "seconds_into_log": 7438.269529793,
+            "startup": false
+          },
+          {
+            "line": 4693471,
+            "frame_number": 2576110,
+            "step_ms": -4294962.306,
+            "frames_missing": 0,
+            "seconds_into_log": 11652.341428065,
+            "startup": false
+          },
+          {
+            "line": 6423111,
+            "frame_number": 3436893,
+            "step_ms": -4294962.306,
+            "frames_missing": 0,
+            "seconds_into_log": 15946.974280837,
+            "startup": false
+          },
+          {
+            "line": 8152862,
+            "frame_number": 4297671,
+            "step_ms": -4294962.306,
+            "frames_missing": 0,
+            "seconds_into_log": 20241.576664936,
+            "startup": false
+          },
+          {
+            "line": 9882586,
+            "frame_number": 5158446,
+            "step_ms": -4294962.306,
+            "frames_missing": 0,
+            "seconds_into_log": 24536.260629778,
+            "startup": false
+          },
+          {
+            "line": 11365246,
+            "frame_number": 5896235,
+            "step_ms": 9.979,
+            "frames_missing": 0,
+            "seconds_into_log": 28217.267131853,
+            "startup": false
+          }
+        ],
+        "missing_hw_timestamp": 5772490,
+        "segments": 10,
+        "drift_segment": {
+          "index": 6,
+          "of": 10,
+          "ts_domain": "hardware_clock",
+          "first_line": 4693471,
+          "last_line": 6423109,
+          "first_frame_number": 2576110,
+          "last_frame_number": 3436892,
+          "samples": 860783,
+          "duration_s": 4294.964713,
+          "drift_ppm": -80.83191625747155,
+          "drift_residual_us": 6010.014870632404
+        },
+        "drift_ppm": -80.83191625747155,
+        "drift_residual_us": 6010.014870632404
+      }
+    },
+    "warnings": [
+      "accel: ts_ms stepped -4294.962 s at CSV line 1233972 (frame_number 863300), 3063.038 s into the log",
+      "accel: ts_ms stepped +9.884 ms at CSV line 1642181 (frame_number 1068384), 4076.470 s into the log",
+      "accel: ts_ms stepped +9.886 ms at CSV line 2429465 (frame_number 1463893), 6031.075 s into the log",
+      "accel: ts_ms stepped -4294.962 s at CSV line 2963784 (frame_number 1732307), 7357.700 s into the log",
+      "accel: ts_ms stepped +9.887 ms at CSV line 3722046 (frame_number 2113215), 9240.357 s into the log",
+      "accel: ts_ms stepped +9.885 ms at CSV line 4094254 (frame_number 2300195), 10164.477 s into the log",
+      "accel: ts_ms stepped -4294.962 s at CSV line 4693472 (frame_number 2601202), 11652.345 s into the log",
+      "accel: ts_ms stepped +9.885 ms at CSV line 5591794 (frame_number 3052458), 13882.861 s into the log",
+      "accel: ts_ms stepped +9.887 ms at CSV line 6195671 (frame_number 3355808), 15382.252 s into the log",
+      "accel: ts_ms stepped -4294.962 s at CSV line 6423110 (frame_number 3470058), 15946.974 s into the log",
+      "accel: ts_ms stepped +9.885 ms at CSV line 6938825 (frame_number 3729125), 17227.443 s into the log",
+      "accel: ts_ms stepped -4294.962 s at CSV line 8152861 (frame_number 4339031), 20241.576 s into the log",
+      "accel: ts_ms stepped +9.886 ms at CSV line 9496378 (frame_number 5013960), 23577.391 s into the log",
+      "accel: ts_ms stepped +9.886 ms at CSV line 9690973 (frame_number 5111719), 24060.526 s into the log",
+      "accel: ts_ms stepped -4294.962 s at CSV line 9882587 (frame_number 5207981), 24536.264 s into the log",
+      "accel: ts_ms stepped +9.883 ms at CSV line 10163733 (frame_number 5349220), 25234.296 s into the log",
+      "accel: ts_ms stepped +9.885 ms at CSV line 10296152 (frame_number 5415745), 25563.052 s into the log",
+      "accel: ts_ms stepped +9.885 ms at CSV line 11433885 (frame_number 5987335), 28387.676 s into the log",
+      "gyro: ts_ms stepped -4294.962 s at CSV line 1233973 (frame_number 854513), 3063.042 s into the log",
+      "gyro: ts_ms stepped +9.979 ms at CSV line 1521054 (frame_number 997364), 3775.759 s into the log",
+      "gyro: ts_ms stepped -4294.962 s at CSV line 2963783 (frame_number 1715317), 7357.696 s into the log",
+      "gyro: ts_ms stepped +9.979 ms at CSV line 2996233 (frame_number 1731466), 7438.270 s into the log",
+      "gyro: ts_ms stepped -4294.962 s at CSV line 4693471 (frame_number 2576110), 11652.341 s into the log",
+      "gyro: ts_ms stepped -4294.962 s at CSV line 6423111 (frame_number 3436893), 15946.974 s into the log",
+      "gyro: ts_ms stepped -4294.962 s at CSV line 8152862 (frame_number 4297671), 20241.577 s into the log",
+      "gyro: ts_ms stepped -4294.962 s at CSV line 9882586 (frame_number 5158446), 24536.261 s into the log",
+      "gyro: ts_ms stepped +9.979 ms at CSV line 11365246 (frame_number 5896235), 28217.267 s into the log"
+    ],
+    "warmup_samples_discarded": 483841,
+    "rows_written": 11599969,
+    "end_temperatures": {
+      "asic": null,
+      "projector": null
+    },
+    "error": null
+  }
+}

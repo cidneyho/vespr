@@ -55,10 +55,21 @@ FLUSH_INTERVAL = 1.0  # seconds between flushes of the CSV to disk
 # global_time_enabled is set to 0 on the sensors before they start.
 HARDWARE_CLOCK = 'hardware_clock'
 
-# A ts_ms interval outside these multiples of the median period is a clock
-# discontinuity rather than jitter. Dropped frames are counted separately,
-# from gaps in frame_number.
+# In hardware_clock, ts_ms is a 32-bit microsecond counter: it wraps every
+# 4294.967 s (71.6 min). A backward step of more than half that range is a
+# wrap, and nothing else is. Rates, gaps and the drift fit unwrap it; the
+# CSV keeps the raw value.
+TS_COUNTER_BITS = 32
+
+# A ts_ms interval within these multiples of the median period is jitter.
 DISCONTINUITY_BAND = (0.5, 1.5)
+
+# An interval of a whole number of periods, from 2 up to MAX_GAP_PERIODS and
+# within PERIOD_GAP_TOLERANCE of it, is a period gap: samples the camera
+# never sent. Any other interval outside DISCONTINUITY_BAND is a clock
+# discontinuity.
+PERIOD_GAP_TOLERANCE = 0.25
+MAX_GAP_PERIODS = 10
 
 # The band is set from the period at --rate until a stream has this many
 # intervals, and from their median after that.
@@ -69,6 +80,7 @@ MIN_INTERVALS = 10
 STARTUP_SECONDS = 1.0
 
 TEMPERATURE_SUFFIX = '_temperature'  # options read for the status lines
+NOT_STREAMING = 'not streaming'  # a temperature asked for while the depth sensor is stopped
 
 DEPTH_WIDTH = 848
 DEPTH_HEIGHT = 480
@@ -152,8 +164,10 @@ def motion_sample(frame, host_ns, accel_stream, frame_timestamp):
 class DropCounter:
     """Counts frames missing from a stream, from gaps in its frame numbers.
 
-    A frame number that does not move forward (a repeat, or the counter
-    restarting) is counted in `backwards`, not as a drop.
+    librealsense numbers the frames on the host as they arrive, so this sees
+    a frame lost between the camera and the callback, not a sample the
+    camera never sent. A frame number that does not move forward (a repeat,
+    or the counter restarting) is counted in `backwards`, not as a drop.
     """
 
     def __init__(self):
@@ -168,6 +182,27 @@ class DropCounter:
             elif frame_number <= self.last:
                 self.backwards += 1
         self.last = frame_number
+
+
+class Unwrapper:
+    """Turns a wrapping counter into one that keeps increasing.
+
+    A step back of more than half the counter's range is a wrap; any other
+    value is passed through, plus the wraps so far. `wraps` counts them.
+    """
+
+    def __init__(self, bits):
+        self.span = 1 << bits
+        self.offset = 0
+        self.wraps = 0
+        self.last = None
+
+    def __call__(self, value):
+        if self.last is not None and value < self.last - self.span // 2:
+            self.offset += self.span
+            self.wraps += 1
+        self.last = value
+        return value + self.offset
 
 
 class Histogram:
@@ -288,11 +323,14 @@ class Segment:
 
 
 class StreamStats:
-    """Running counts, rate, drops, clock discontinuities and drift for one stream.
+    """Running counts, rate, gaps, wraps, clock discontinuities and drift for one stream.
 
-    Dropped frames are gaps in frame_number, the authoritative count. The
-    rate is 1 / the median interval between consecutive ts_ms. An interval
-    outside DISCONTINUITY_BAND times the median so far is a clock
+    Missing samples are counted two ways, and neither sees everything:
+    frame_gaps from gaps in frame_number (host side), and period_gaps from
+    ts_ms intervals of a whole number of periods (sensor side). The rate is
+    1 / the median interval between consecutive ts_ms, unwrapped. A wrap of
+    the 32-bit counter is recorded in wraps and is nothing else. Any other
+    interval outside DISCONTINUITY_BAND times the median so far is a clock
     discontinuity, recorded in discontinuities; a ts_domain change is
     recorded in domain_changes. Either one ends a segment, and the drift fit
     is reported for the longest segment.
@@ -306,6 +344,10 @@ class StreamStats:
         self.domain = None
         self.domain_changes = []  # dicts: line, frame_number, from, to
         self.discontinuities = []  # dicts, see _discontinuity
+        self.wraps = []  # dicts, see _wrap
+        self.period_gaps = []  # dicts, see _period_gap
+        self.period_gap_samples = 0  # samples missing across all of period_gaps
+        self._unwrap = Unwrapper(TS_COUNTER_BITS)
         self.periods = Histogram()  # ts_ms intervals in microseconds, within a domain
         self._window = Histogram()  # the same, since the last window_rate()
         self._reference = self.nominal_period_us
@@ -325,18 +367,33 @@ class StreamStats:
         if self._first_host_ns is None:
             self._first_host_ns = sample.host_ns
 
-        ts = round(sample.ts_ms * 1000)  # microseconds, the camera clock's resolution
-        new_segment = self.segment is None
-        if self.domain is not None and sample.ts_domain != self.domain:
-            # Two clocks: the step between them is not an interval.
+        raw = round(sample.ts_ms * 1000)  # microseconds, the camera clock's resolution
+        changed = self.domain is not None and sample.ts_domain != self.domain
+        if changed:
+            # Two clocks: the step between them is not an interval, nor a wrap.
             self.domain_changes.append({
                 'line': line, 'frame_number': sample.frame_number,
                 'from': self.domain, 'to': sample.ts_domain})
-            new_segment = True
-        elif self._last_ts is not None:
+            self._unwrap = Unwrapper(TS_COUNTER_BITS)
+        ts = raw
+        if sample.ts_domain == HARDWARE_CLOCK:  # only the camera's counter wraps
+            wraps, previous_raw = self._unwrap.wraps, self._unwrap.last
+            ts = self._unwrap(raw)
+            if self._unwrap.wraps > wraps:
+                self.wraps.append(self._wrap(sample, line, raw - previous_raw))
+        new_segment = self.segment is None or changed
+        if not changed and self._last_ts is not None:
             interval = ts - self._last_ts
             low, high = DISCONTINUITY_BAND
-            if not low * self._reference <= interval <= high * self._reference:
+            periods = interval / self._reference
+            whole = round(periods)
+            if low <= periods <= high:
+                pass
+            elif 2 <= whole <= MAX_GAP_PERIODS and abs(periods - whole) <= PERIOD_GAP_TOLERANCE:
+                self.period_gaps.append(
+                    self._period_gap(sample, line, whole, previous_frame))
+                self.period_gap_samples += whole - 1
+            else:
                 self.discontinuities.append(
                     self._discontinuity(sample, line, interval, previous_frame))
                 new_segment = True
@@ -357,19 +414,43 @@ class StreamStats:
         else:
             self.segment.add(sample, line, ts)
 
-    def _discontinuity(self, sample, line, interval_us, previous_frame):
-        seconds_in = (sample.host_ns - self._first_host_ns) / 1e9
-        missing = 0
-        if previous_frame is not None:
-            missing = max(0, sample.frame_number - previous_frame - 1)
+    def _where(self, sample, line):
         return {
             'line': line,
             'frame_number': sample.frame_number,
-            'step_ms': interval_us / 1000,
-            'frames_missing': missing,
-            'seconds_into_log': seconds_in,
-            'startup': seconds_in < STARTUP_SECONDS,
+            'seconds_into_log': (sample.host_ns - self._first_host_ns) / 1e9,
         }
+
+    @staticmethod
+    def _frames_missing(sample, previous_frame):
+        if previous_frame is None:
+            return 0
+        return max(0, sample.frame_number - previous_frame - 1)
+
+    def _discontinuity(self, sample, line, interval_us, previous_frame):
+        event = self._where(sample, line)
+        event.update({
+            'step_ms': interval_us / 1000,
+            'frames_missing': self._frames_missing(sample, previous_frame),
+            'startup': event['seconds_into_log'] < STARTUP_SECONDS,
+        })
+        return event
+
+    def _wrap(self, sample, line, raw_step_us):
+        event = self._where(sample, line)
+        event['step_ms'] = raw_step_us / 1000
+        return event
+
+    def _period_gap(self, sample, line, periods, previous_frame):
+        # frames_missing is what frame_number saw across the same gap: 0
+        # when the sample was lost inside the camera.
+        event = self._where(sample, line)
+        event.update({
+            'periods': periods,
+            'samples_missing': periods - 1,
+            'frames_missing': self._frames_missing(sample, previous_frame),
+        })
+        return event
 
     def longest_segment(self):
         """The segment with the most samples, the earlier one on a tie."""
@@ -433,12 +514,14 @@ class Writer:
         return self._queue.qsize()
 
     def snapshot(self):
-        """Counts, drops, discontinuities and rate since the last snapshot, per stream."""
+        """Counts, gaps, wraps, discontinuities and rate since the last snapshot, per stream."""
         with self._lock:
             return {
                 name: {
                     'samples': stats.count,
-                    'dropped': stats.frame_gaps.dropped,
+                    'frame_number_gaps': stats.frame_gaps.dropped,
+                    'period_gaps': stats.period_gap_samples,
+                    'wraps': len(stats.wraps),
                     'rate': stats.window_rate(),
                     'discontinuities': list(stats.discontinuities),
                 }
@@ -515,7 +598,12 @@ def _number(value, digits, unit=''):
 
 
 def temperature_text(temperatures):
-    """The temperatures the camera offers, for example 'asic 41.0 C'."""
+    """The temperatures the camera offers, for example 'asic 41.0 C'.
+
+    None means they were not read because the depth sensor is not streaming.
+    """
+    if temperatures is None:
+        return f'temperature {NOT_STREAMING}'
     return ', '.join(
         f'{name} {_number(value, 1, " C")}' for name, value in temperatures.items())
 
@@ -543,17 +631,28 @@ def discontinuities_text(discontinuities):
     return text
 
 
+def missing_text(frame_number_gaps, period_gaps):
+    """Samples missing, counted both ways; neither count sees every loss."""
+    return f'missing {frame_number_gaps} by frame number, {period_gaps} by period'
+
+
 def status_line(elapsed, streams, queue_depth, temperatures):
-    """One status line: elapsed time, then per stream, queue, temperatures."""
+    """One status line: elapsed time, then per stream, queue, temperatures.
+
+    temperatures is a dict, empty when the camera offers none, or None when
+    they were not read because the depth sensor is not streaming.
+    """
     parts = [format_elapsed(elapsed)]
     for name in STREAMS:
-        stream = streams.get(name, {'samples': 0, 'dropped': 0, 'rate': None})
+        stream = streams.get(name, {})
         parts.append(
-            f'{name} {stream["samples"]} samples, '
-            f'{_number(stream["rate"], 2, " Hz")}, {stream["dropped"]} dropped, '
+            f'{name} {stream.get("samples", 0)} samples, '
+            f'{_number(stream.get("rate"), 2, " Hz")}, '
+            f'{missing_text(stream.get("frame_number_gaps", 0), stream.get("period_gaps", 0))}, '
+            f'{_plural(stream.get("wraps", 0), "wrap")}, '
             f'{discontinuities_text(stream.get("discontinuities", []))}')
     parts.append(f'queue {queue_depth}')
-    if temperatures:
+    if temperatures is None or temperatures:
         parts.append(temperature_text(temperatures))
     return ' | '.join(parts)
 
@@ -570,8 +669,11 @@ def summarize(stats):
             'domain_changes': list(s.domain_changes),
             'rate_hz': s.rate(),
             'measured_period_us': s.period_us(),
-            'dropped': s.frame_gaps.dropped,
+            'frame_number_gaps': s.frame_gaps.dropped,
+            'period_gaps': s.period_gap_samples,
+            'period_gap_events': list(s.period_gaps),
             'frame_number_backwards': s.frame_gaps.backwards,
+            'wraps': list(s.wraps),
             'clock_discontinuities': list(s.discontinuities),
             'missing_hw_timestamp': s.missing_hw,
             'segments': s.segments,
@@ -638,8 +740,14 @@ def check_streams(streams, rate):
             warnings.append(
                 f'{name}: measured {measured:.2f} Hz, more than '
                 f'{RATE_TOLERANCE:.0%} from the requested {rate} Hz')
-        if s['dropped']:
-            warnings.append(f'{name}: {s["dropped"]} dropped frames (gaps in frame_number)')
+        if s['frame_number_gaps']:
+            warnings.append(
+                f'{name}: {_plural(s["frame_number_gaps"], "sample")} missing by '
+                'frame-number gaps (host side)')
+        if s['period_gaps']:
+            warnings.append(
+                f'{name}: {_plural(s["period_gaps"], "sample")} missing by period gaps '
+                f'(sensor side, from ts_ms), in {_plural(len(s["period_gap_events"]), "gap")}')
         if s['frame_number_backwards']:
             warnings.append(
                 f'{name}: frame number went backwards '
@@ -657,8 +765,13 @@ def report_lines(duration, streams, warnings, csv_path, csv_size, error=None):
             f'  {name:<5}     {s["samples"]} samples, '
             f'{_number(s["rate_hz"], 2, " Hz")} '
             f'(median period {_number(s["measured_period_us"], 1, " us")}), '
-            f'{s["dropped"]} dropped, '
-            f'{discontinuities_text(s["clock_discontinuities"])}, ts_domain {s["ts_domain"]}')
+            f'ts_domain {s["ts_domain"]}')
+        lines.append(
+            f'            missing: {s["frame_number_gaps"]} by frame-number gaps (host side), '
+            f'{s["period_gaps"]} by period gaps (sensor side, from ts_ms)')
+        lines.append(
+            f'            {_plural(len(s["wraps"]), "ts_ms wrap")} (unwrapped), '
+            f'{discontinuities_text(s["clock_discontinuities"])}')
     for name in STREAMS:
         s = streams.get(name)
         if s is None:
@@ -683,8 +796,9 @@ def report_lines(duration, streams, warnings, csv_path, csv_size, error=None):
         lines.append(f'  WARNING   {warning}')
     if not warnings and error is None:
         lines.append(
-            f'  checks    ok: rates within {RATE_TOLERANCE:.0%} of --rate, no dropped frames, '
-            f'no clock discontinuities after startup, ts_ms in {HARDWARE_CLOCK} throughout')
+            f'  checks    ok: rates within {RATE_TOLERANCE:.0%} of --rate, no samples missing '
+            f'by frame number or by period, no clock discontinuities after startup, ts_ms in '
+            f'{HARDWARE_CLOCK} throughout')
     return lines
 
 
@@ -748,8 +862,8 @@ def run_log(camera, folder, warmup, duration, rate, options, stop,
     """Warm up, log until duration or stop, then flush and report.
 
     camera is a started-on-demand object with start(on_sample), stop(),
-    info(), temperatures() and temperature_problems(); open_camera returns
-    the real one. stop is a
+    info(), temperatures() (None while the depth sensor is not streaming)
+    and temperature_problems(); open_camera returns the real one. stop is a
     threading.Event: setting it (Ctrl+C) ends the run cleanly. note is free
     text for the sidecar, such as how the camera was mounted. Returns the
     path of the CSV.
@@ -877,6 +991,9 @@ def run_log(camera, folder, warmup, duration, rate, options, stop,
                 say('stopping: Ctrl+C or a stop signal')
         finally:
             elapsed = 0.0 if logging_start is None else time.monotonic() - logging_start
+            # Read before the stop: the temperatures are only read while the
+            # depth sensor streams.
+            end_temperatures = temperatures()
             # Order matters for the tail of the data: stop the sensors so no
             # more samples come, then let the writer drain the queue.
             try:
@@ -885,7 +1002,6 @@ def run_log(camera, folder, warmup, duration, rate, options, stop,
                 say(f'warning: stopping the camera failed: {error}')
             writer.stop()
             say_clock_events()
-            end_temperatures = temperatures()
             say(status_line(elapsed, writer.snapshot(), writer.queue_depth(), end_temperatures))
             streams = summarize(writer.stats)
             warnings = check_streams(streams, rate) if logging_start is not None else []
@@ -1082,12 +1198,20 @@ class RealSenseImu:
                 print(f'warning: closing a sensor failed: {error}', flush=True)
         self._opened = []
 
+    def _depth_streaming(self):
+        return self._depth_sensor is not None and self._depth_sensor in self._started
+
     def temperatures(self):
         """Each offered temperature in deg C, None where the read failed.
 
-        librealsense refuses some of these unless the sensor is streaming,
-        so a failure is kept in temperature_problems() rather than hidden.
+        Returns None, reading nothing, while the depth sensor is not
+        streaming: overnight, asic_temperature and projector_temperature
+        read fine for 8 h and failed only before the depth sensor started
+        and after it stopped. A failure while it streams is kept in
+        temperature_problems() rather than hidden.
         """
+        if self._temperature_options and not self._depth_streaming():
+            return None
         readings = {}
         for name, (sensor, option, sensor_name) in self._temperature_options.items():
             try:
@@ -1140,7 +1264,8 @@ class RealSenseImu:
         sensors = {}
         for sensor in (self._motion, self._depth_sensor):
             if sensor is not None:
-                sensors[sensor.get_info(rs.camera_info.name)] = _sensor_options(sensor)
+                sensors[sensor.get_info(rs.camera_info.name)] = _sensor_options(
+                    sensor, read_temperatures=self._depth_streaming())
 
         motion_correction = None
         if self._motion.supports(rs.option.enable_motion_correction):
@@ -1164,10 +1289,17 @@ class RealSenseImu:
         }
 
 
-def _sensor_options(sensor):
-    """Every option the sensor supports, with its current value."""
+def _sensor_options(sensor, read_temperatures):
+    """Every option the sensor supports, with its current value.
+
+    The *_temperature options are only read when read_temperatures is true,
+    that is while the depth sensor streams; otherwise they say NOT_STREAMING.
+    """
     values = {}
     for option in sensor.get_supported_options():
+        if not read_temperatures and enum_text(option).endswith(TEMPERATURE_SUFFIX):
+            values[enum_text(option)] = NOT_STREAMING
+            continue
         try:
             values[enum_text(option)] = sensor.get_option(option)
         except Exception as error:
