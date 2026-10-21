@@ -361,7 +361,7 @@ Unlike the recorder, `run.py` opens the live camera in its own process, not thro
 ROS wiring only, and the only module that imports `rclpy`. It starts, logs
 `perception_node started`, and spins until Ctrl+C or shutdown. It has no subscribers, publishers
 or parameters yet. Those wait on the topics, message types and frames marked TBD in
-[`docs/interfaces.md`](../../../docs/interfaces.md).
+[`docs/system-map/`](../../../docs/system-map/README.md).
 
 It is installed as the `perception_node` executable (`ros2 run perch_perception
 perception_node`) and started by `launch/perception.launch.py`.

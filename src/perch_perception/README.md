@@ -45,7 +45,7 @@ librealsense crashes when the motion streams start.
 
 ## Interfaces
 
-Topics, message types and frames are defined in [`docs/interfaces.md`](../../docs/interfaces.md).
+Topics and message types are defined in [`topics-and-interfaces.md`](../../docs/system-map/topics-and-interfaces.md), frames in [`naming.md`](../../docs/system-map/naming.md).
 The rows that involve perception are still TBD there:
 
 | Direction | Interface | Other side |
