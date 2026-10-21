@@ -2,7 +2,7 @@
 
 Board box 05. See the [index](README.md).
 
-Sensors send data into ROS and actuators receive commands from it, each through exactly one node. Every `/vespr` and `/mocap` name is a **proposal**; `/fmu` and camera driver names belong to PX4 and Intel. Naming rules: [/NAMING.md](../../NAMING.md).
+Sensors send data into ROS and actuators receive commands from it, each through exactly one node. Every `/vespr` and `/mocap` name is a **proposal**; `/fmu` and camera driver names belong to PX4 and Intel. Naming rules: [docs/NAMING.md](../NAMING.md).
 
 ## Hardware → ROS entry points
 

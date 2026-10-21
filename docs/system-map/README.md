@@ -17,7 +17,7 @@ Markdown copy of the team's FigJam board, split into one file per topic so you o
 | [system-map.md](system-map.md) | 06 | The full block diagram: nodes, hardware, owners, connections |
 | [mocap.md](mocap.md) | 07 | Mocap pipeline, what the evaluator computes, the two-repo boundary, mocap phase-out stages |
 | [perch-cycle.md](perch-cycle.md) | 08 | Mission state machine: the 13 states with their exits and aborts |
-| [naming.md](naming.md) | 09 | Frames and the name tree (full rules live in [/NAMING.md](../../NAMING.md)) |
+| [naming.md](naming.md) | 09 | Frames and the name tree (full rules live in [docs/NAMING.md](../NAMING.md)) |
 | [sim-and-logging.md](sim-and-logging.md) | 10 | SITL/Gazebo setup, what sim is for, logs, the five result numbers |
 
 ## Owners
@@ -35,5 +35,4 @@ Packages are named `vespr_*`: `vespr_bringup`, `vespr_interfaces`, `vespr_percep
 
 ## Related docs
 
-- [docs/interfaces.md](../interfaces.md): the interface contract between packages, taken from [topics-and-interfaces.md](topics-and-interfaces.md) and [naming.md](naming.md).
-- [/NAMING.md](../../NAMING.md): full naming rules.
+- [docs/NAMING.md](../NAMING.md): full naming rules.

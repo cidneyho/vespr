@@ -2,7 +2,7 @@
 
 Board box 09. See the [index](README.md).
 
-**[/NAMING.md](../../NAMING.md) is the full naming reference for the repo** and already includes this box, with decided / proposed status. Follow it when naming anything. This file is a short summary of the board so the system map is complete.
+**[docs/NAMING.md](../NAMING.md) is the full naming reference for the repo** and already includes this box, with decided / proposed status. Follow it when naming anything. This file is a short summary of the board so the system map is complete.
 
 ## Frames
 

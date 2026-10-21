@@ -16,7 +16,7 @@ class PerceptionNode(Node):
         super().__init__('perception_node')
 
         # Publishers and subscribers get added here once the topics, message
-        # types and frames marked TBD in docs/interfaces.md are agreed:
+        # types and frames marked TBD in docs/system-map/ are agreed:
         #   in:  camera images    (camera driver / simulation -> perception)
         #   in:  drone pose       (PX4 onboard estimate -> perception)
         #   out: branch location  (perception -> flight control)

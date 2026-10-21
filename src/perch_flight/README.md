@@ -1,6 +1,6 @@
 # perch_flight
 
-Flight control nodes. They command PX4 over ROS 2 through the `/fmu/in/*` and `/fmu/out/*` topics (see [docs/interfaces.md](../../docs/interfaces.md)). The terms used here are explained in [perch_sim](../perch_sim/README.md#terms).
+Flight control nodes. They command PX4 over ROS 2 through the `/fmu/in/*` and `/fmu/out/*` topics (see [topics-and-interfaces.md](../../docs/system-map/topics-and-interfaces.md#px4-topics-through-the-micro-xrce-agent)). The terms used here are explained in [perch_sim](../perch_sim/README.md#terms).
 
 ## Test flight: fly_square
 
