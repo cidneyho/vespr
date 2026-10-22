@@ -206,6 +206,11 @@ def write_sdf(branches, path):
     limb = next(b for b in branches if b.spec['name'] == 'limb')
     p0, p1 = (limb.point(s) for s in PERCH_ZONE)
     r0, r1 = (limb.radius(s) for s in PERCH_ZONE)
+    # perch_point: middle of the perch zone on the limb's centreline, x along the limb
+    s_perch = sum(PERCH_ZONE) / 2
+    perch, (tx, ty, tz) = limb.point(s_perch), limb.tangent(s_perch)
+    perch_pitch = -math.asin(tz)  # SDF pitch is positive nose down
+    perch_yaw = math.atan2(ty, tx)
     collisions = '\n'.join(collision_xml(b) for b in branches)
     path.write_text(f'''<?xml version="1.0"?>
 <!--
@@ -217,6 +222,8 @@ def write_sdf(branches, path):
     out to x {limb.point(limb.length)[0]:.2f}. Diameter tapers from {2 * limb.spec['r0'] * 100:.1f} cm to {2 * limb.spec['r1'] * 100:.1f} cm.
   Perch zone: limb from x {p0[0]:.2f} to {p1[0]:.2f}, diameter {2 * r0 * 100:.1f} to {2 * r1 * 100:.1f} cm,
     top at z {p0[2] + r0:.2f} to {p1[2] + r1:.2f}.
+  perch_point: where to perch, on the limb's centreline at the middle of the perch zone
+    (x {perch[0]:.3f}, z {perch[2]:.3f}; the top is {limb.radius(s_perch) * 100:.1f} cm above). x along the limb, z up.
   Static. The visual is meshes/branch.obj with Poly Haven's bark_brown_02 (CC0).
 -->
 <sdf version="1.9">
@@ -241,6 +248,10 @@ def write_sdf(branches, path):
           </pbr>
         </material>
       </visual>
+    </link>
+    <!-- No collision or visual: a marker that Gazebo reports the pose of (vespr_sim mocap_sim) -->
+    <link name="perch_point">
+      <pose>{perch[0]:.4f} {perch[1]:.4f} {perch[2]:.4f} 0 {perch_pitch:.5f} {perch_yaw:.5f}</pose>
     </link>
   </model>
 </sdf>

@@ -3,7 +3,9 @@
   Horizontal rod on two posts, standing in for a branch.
   Rod: 4 cm diameter, 1.5 m long, along the model's y axis, top of rod at 1.52 m.
   Static, so it never moves when the drone hits it.
+  perch_point: where to perch, on the rod's centreline at its middle. x along the rod, z up.
 -->
+
 <sdf version="1.9">
   <model name="perch_rod">
     <static>true</static>
@@ -24,6 +26,11 @@
           <diffuse>0.4 0.25 0.1 1</diffuse>
         </material>
       </visual>
+    </link>
+
+    <!-- No collision or visual: a marker that Gazebo reports the pose of (vespr_sim mocap_sim) -->
+    <link name="perch_point">
+      <pose>0 0 1.5 0 0 1.5708</pose>
     </link>
 
     <link name="post_left">
