@@ -15,6 +15,7 @@ setup(
     entry_points={
         'console_scripts': [
             'fly_square = perch_flight.fly_square:main',
+            'flight_cli = perch_flight.flight_cli:main',
         ],
     },
 )
