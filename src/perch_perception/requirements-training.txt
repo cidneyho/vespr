@@ -1,0 +1,2 @@
+# Extra Python packages for perch_perception/training only; the drone does not need them.
+pyyaml
