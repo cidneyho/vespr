@@ -119,3 +119,22 @@ replaces its labels and says how many. Each clip that now has labels and no row 
 is given `train` or `val`, as described above; clips already in `splits.csv`, such as `hold`
 clips, keep their split. Deleting a clip's row from `splits.csv` makes it new again, so the next
 import gives it `train` or `val`: to keep a clip held, change its split, never delete its row.
+
+## 3. Check the labels on a contact sheet
+
+```bash
+python -m perch_perception.training.contact_sheet
+python -m perch_perception.training.contact_sheet --count 100 --seed 3
+```
+
+This draws 50 labeled frames (`--count`), chosen at random, into one grid image,
+`contact_sheet.png` in the dataset folder (`--out` writes it somewhere else). Each tile is the
+frame with its branch masks filled in green at 40% opacity and outlined, and its frame id
+underneath. Open it and look for masks that miss the branch, cover the background or are missing.
+Frames labeled as having no branch are sampled too and show with nothing drawn: check that they
+really show no branch.
+
+The frames are picked from every labeled frame, whatever its split, `hold` clips included,
+because looking at labels is not scoring. The same `--seed` always picks the same frames, so a
+sheet can be made again after fixing labels; a new seed shows other frames. A `--count` larger
+than the number of labeled frames draws all of them.
