@@ -294,3 +294,38 @@ CPU if there is none.
 Only `val` is scored. Clips marked `hold` or `test` are never scored or drawn, and the command
 refuses to run if one of them was used by a training run. Scoring the test split is a separate,
 deliberate step at the end of the project.
+
+## 6. Export to ONNX and check it
+
+```bash
+python -m perch_perception.training.export_model 2026-10-22_320_01
+```
+
+Run it on the server, after choosing a run. It exports the run's `weights/best.pt` to
+`weights/best.onnx` in the same run folder, at the run's image size, batch 1, with the ONNX opset
+`onnx_opset` from `config/training.yaml` (`--config` picks another file).
+
+Then it checks the file. Up to 10 labeled `val` frames, spread across the `val` clips (never `hold`
+or `test`) go through both the ONNX file, with `onnxruntime`, and the original weights. Both get
+the same input the engine will get: the frame scaled to fit a square of the run's image size,
+the rest padded (letterboxing). For each frame, every predicted branch is merged into one mask
+the frame's size, and the two masks are
+compared by intersection over union (IoU: the pixels in both masks over the pixels in either;
+two empty masks count as 1.0). The check passes when every frame's IoU is at least
+`onnx_min_mask_iou` (0.98). The result goes in `runs/<run>/export.json`: the ONNX path, the
+opset, each frame's IoU, the lowest, the tolerance and whether it passed. The command exits with
+status 1 when the check fails, and refuses to run, like the others, if a clip marked `hold` or
+`test` was used by a training run. The frames are taken one `val` clip at a time in turn, frames
+that show a branch first, so even a few frames cover every clip and compare real masks.
+
+Both the export and the check run on the CPU, and the ONNX graph is not simplified
+(`simplify=False`). Either way round, Ultralytics would `pip install` a missing package without
+asking: `onnxslim` to simplify, and `onnxruntime-gpu` to predict with the ONNX file on a GPU.
+TensorRT simplifies the graph itself when it builds the engine.
+
+The TensorRT engine is not built here. That is plan task T7.1, done on the Jetson from
+`best.onnx`, because an engine only runs on the TensorRT version and GPU it was built for. The
+opset must be one the Jetson's TensorRT accepts: TensorRT 10.x accepts opset 17. The Jetson's
+TensorRT version has not been checked yet (on 2026-10-22 the Jetson did not answer over SSH), so
+check it before T7.1 with `dpkg -l | grep -i tensorrt` on the Jetson, and lower `onnx_opset` if
+it is older than 10.

@@ -264,6 +264,24 @@ def assign_split(clip, domain, splits, clip_domains):
     return 'val' if int(hashlib.md5(clip.encode()).hexdigest(), 16) % 5 == 0 else 'train'
 
 
+def run_files(dataset, run):
+    """Return a run's folder, its best weights and its image size.
+
+    Raises DatasetError naming the run if it does not exist or has no best weights yet.
+    """
+    run_dir = dataset.runs_dir / run
+    if not run_dir.is_dir():
+        raise DatasetError(f'run {run} does not exist: there is no folder {run_dir}')
+    weights = run_dir / 'weights' / 'best.pt'
+    if not weights.exists():
+        raise DatasetError(f'run {run} has no {weights}, so it has not finished training')
+    try:
+        image_size = json.loads((run_dir / 'run.json').read_text())['image_size']
+    except (OSError, ValueError, KeyError) as error:
+        raise DatasetError(f'run {run}: its run.json cannot be read ({error!r})') from None
+    return run_dir, weights, image_size
+
+
 def used_clips(dataset):
     """Return every clip that any training run used for train or val, read from its run.json."""
     used = set()

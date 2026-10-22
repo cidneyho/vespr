@@ -27,31 +27,13 @@ import cv2
 from perch_perception.training.contact_sheet import draw_polygons
 from perch_perception.training.dataset import (
     DEFAULT_DATASET, DOMAINS, Dataset, DatasetError, check_splits, labeled_frames, parse_label,
-    write_data_yaml)
+    run_files, write_data_yaml)
 
 LABEL_COLOR = (0, 255, 0)  # green, in OpenCV's blue, green, red order
 PREDICTION_COLOR = (0, 0, 255)  # red
 SCORE_KEYS = ('box_map50', 'box_map', 'mask_map50', 'mask_map')
 TABLE_HEADER = ('run', 'domain', 'frames', 'box mAP50', 'box mAP50-95', 'mask mAP50',
                 'mask mAP50-95')
-
-
-def _run_files(dataset, run):
-    """Return a run's folder, its best weights and its image size.
-
-    Raises DatasetError naming the run if it does not exist or has no best weights yet.
-    """
-    run_dir = dataset.runs_dir / run
-    if not run_dir.is_dir():
-        raise DatasetError(f'run {run} does not exist: there is no folder {run_dir}')
-    weights = run_dir / 'weights' / 'best.pt'
-    if not weights.exists():
-        raise DatasetError(f'run {run} has no {weights}, so it has not finished training')
-    try:
-        image_size = json.loads((run_dir / 'run.json').read_text())['image_size']
-    except (OSError, ValueError, KeyError) as error:
-        raise DatasetError(f'run {run}: its run.json cannot be read ({error!r})') from None
-    return run_dir, weights, image_size
 
 
 def score_run(dataset, run, domain, day, device=None):
@@ -62,7 +44,7 @@ def score_run(dataset, run, domain, day, device=None):
     and Ultralytics' output go in runs/<run>/eval_<YYYY-MM-DD>/<all|indoor|outdoor>/. device is
     what Ultralytics takes, a GPU index such as '0' or 'cpu'; None lets it pick.
     """
-    run_dir, weights, image_size = _run_files(dataset, run)
+    run_dir, weights, image_size = run_files(dataset, run)
     val = labeled_frames(dataset, 'val', domain)
     if not val:
         return None
@@ -120,7 +102,7 @@ def evaluate_runs(dataset, runs, day, device=None):
                            'nothing to score. Label a batch from a val clip (see splits.csv).')
     # Every run is checked before the first is scored, so a mistyped name fails at once.
     for run in runs:
-        _run_files(dataset, run)
+        run_files(dataset, run)
 
     rows = []
     for run in runs:
@@ -162,7 +144,7 @@ def save_overlays(dataset, run, count=20, seed=0, device=None):
     seed picks the same frames. Each is written to runs/<run>/overlays/<frame_id>.png at its
     own size. Returns the paths written, in manifest order.
     """
-    run_dir, weights, image_size = _run_files(dataset, run)
+    run_dir, weights, image_size = run_files(dataset, run)
     val = labeled_frames(dataset, 'val')
     # A random sample without repeats, from a generator seeded with `seed`, as on the contact
     # sheet. Sorting the picked positions keeps the frames in manifest order.
