@@ -78,3 +78,44 @@ rows, so the next run tries it again.
 At the end, the frames not yet in a batch are zipped into `to_label/batch_<nnn>.zip`, at most 100
 per zip (`--batch-size`), with the PNGs at the top of the zip. Upload each zip to the labeling
 tool. The batch each frame went into is recorded in `manifest.csv`.
+
+## 2. Label a batch and import it
+
+Upload `to_label/batch_<nnn>.zip` to the labeling tool (CVAT or Roboflow) and draw a polygon
+around each branch, class `branch`. **Finish the whole batch before exporting**: open every
+frame, and mark the ones with no branch (in Roboflow, "null"), because some tools export an empty
+label for a frame nobody looked at, and only a finished batch tells "no branch" apart from "not
+labeled yet".
+
+Export the batch:
+
+- **CVAT**: "Ultralytics YOLO Segmentation". CVAT keeps the file names.
+- **Roboflow**: "YOLOv8/YOLO11 segmentation". Turn off resize and every other preprocessing and
+  augmentation step first, so the polygons match the original frames. Roboflow renames files
+  (`<frame>_png.rf.<hash>.txt`); the import undoes that.
+
+Then import the zip, or the folder it unzips to:
+
+```bash
+python -m perch_perception.training.import_labels ~/Downloads/<export>.zip
+```
+
+Only the `.txt` files inside a `labels` folder are read; `data.yaml`, `train.txt`, images,
+`labels.cache` and macOS `__MACOSX` entries are ignored. Any train, valid or test folders the tool
+made are ignored too: splits come from `splits.csv` only. Each label is copied to
+`labels/<frame_id>.txt`, with Windows line endings, trailing spaces and blank lines cleaned up.
+
+The import is refused, changing nothing, if:
+
+- the export does not cover exactly the frames of one batch (it says how many are missing)
+- a label matches no frame in `manifest.csv`, or a frame that was never packed into a batch
+- a polygon is malformed: an odd number of coordinates, fewer than 3 points, a value outside 0
+  to 1, or a class other than 0
+- a clip marked `hold` or `test` was already used by a training run
+
+It prints how many frames came back with no branch (`<empty> of <labels> frames came back with no
+branch`): a large number usually means the batch was not finished. Importing a batch again
+replaces its labels and says how many. Each clip that now has labels and no row in `splits.csv`
+is given `train` or `val`, as described above; clips already in `splits.csv`, such as `hold`
+clips, keep their split. Deleting a clip's row from `splits.csv` makes it new again, so the next
+import gives it `train` or `val`: to keep a clip held, change its split, never delete its row.

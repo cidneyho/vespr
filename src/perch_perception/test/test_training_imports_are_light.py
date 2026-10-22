@@ -15,6 +15,7 @@ import pytest
 TRAINING_MODULES = [
     'perch_perception.training.dataset',
     'perch_perception.training.extract_frames',
+    'perch_perception.training.import_labels',
 ]
 
 HEAVY_LIBRARIES = ['torch', 'ultralytics', 'onnx', 'onnxruntime', 'rclpy']
