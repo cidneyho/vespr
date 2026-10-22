@@ -18,6 +18,7 @@ TRAINING_MODULES = [
     'perch_perception.training.import_labels',
     'perch_perception.training.contact_sheet',
     'perch_perception.training.train',
+    'perch_perception.training.evaluate',
 ]
 
 HEAVY_LIBRARIES = ['torch', 'ultralytics', 'onnx', 'onnxruntime', 'rclpy']

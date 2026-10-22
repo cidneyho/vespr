@@ -264,3 +264,33 @@ from google.colab import drive; drive.mount('/content/drive')
 Colab already has a CUDA build of PyTorch, so do not install another one. Copy the runs back to
 Drive before the runtime ends (the last line), and from there into `~/vespr_dataset/runs/` on the
 Mac, for the same reason as `rsync` above.
+
+## 5. Evaluate and compare runs
+
+```bash
+python -m perch_perception.training.evaluate 2026-10-22_320_01
+python -m perch_perception.training.evaluate 2026-10-22_320_01 2026-10-22_416_01 --overlays 0
+```
+
+Run it on the server, after training. Each run named (a folder in `runs/`) is scored with its
+`weights/best.pt` on the labeled frames of today's `val` clips: box and mask mAP50 and mAP50-95,
+for all frames (`all`), then `indoor` and `outdoor` separately. Each frame is letterboxed to a
+square of the run's image size, the only input the exported engine takes. A domain with no
+labeled val frames is left out. mAP50 counts a predicted branch as found when its overlap with
+the label (intersection over union) is at least 0.5; mAP50-95 averages that over thresholds 0.5
+to 0.95.
+
+It prints one table, a line per run and domain. The val split grows as clips are labeled, so
+scores saved on different days are not comparable: to compare runs, name them all in one
+command, and each is scored again on the same frames. Each run's scores are also saved as
+`runs/<run>/scores_<YYYY-MM-DD>.json`, and the split lists and Ultralytics' output as
+`runs/<run>/eval_<YYYY-MM-DD>/<all|indoor|outdoor>/`.
+
+It also draws 20 val frames per run (`--overlays`, `0` for none), chosen at random with a fixed
+seed, into `runs/<run>/overlays/<frame_id>.png`: the run's predicted masks in red over the labels
+in green. `--device` is a GPU index or `cpu`; by default Ultralytics takes the first GPU, or the
+CPU if there is none.
+
+Only `val` is scored. Clips marked `hold` or `test` are never scored or drawn, and the command
+refuses to run if one of them was used by a training run. Scoring the test split is a separate,
+deliberate step at the end of the project.
