@@ -1,0 +1,9 @@
+# Close (grasp) or open (release) the legs. Used by /vespr/legs/grasp and /vespr/legs/release.
+# Goal: none. The action name says what to do.
+---
+bool success
+bool gripped        # branch held. Only ever true for a successful grasp
+string message      # why it failed, or a short summary on success
+---
+float32 latch_position   # 0 open .. 1 closed
+bool moving
