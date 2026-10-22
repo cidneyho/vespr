@@ -1,0 +1,3 @@
+# Ultralytics downloads pretrained weights (yolo26n-seg.pt, yolo26n.pt) into the working folder,
+# and model weights never go into git.
+*.pt

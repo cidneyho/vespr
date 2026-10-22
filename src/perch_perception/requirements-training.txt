@@ -1,2 +1,9 @@
 # Extra Python packages for perch_perception/training only; the drone does not need them.
+#
+# Install PyTorch first, from https://pytorch.org, so pip does not pick a build for you. On the
+# 5090 server (a Blackwell GPU) it must be a CUDA 12.8 or newer build; older builds do not
+# support the card. On a Mac, the CPU build that pip installs with ultralytics is fine.
+ultralytics==8.4.184
+onnx
+onnxruntime
 pyyaml

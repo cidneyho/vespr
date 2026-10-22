@@ -20,6 +20,7 @@ perch_perception/
   data_collection/      tools for collecting training data, kept apart from the perception code
     record.py           browser page with a live view and a Record / Stop button
     clip_storage.py     upload, download and clean up clips on Google Drive (rclone)
+  training/             from recorded clips to a trained branch segmentation model (see its README)
 launch/
   perception.launch.py  starts perception_node
 resource/

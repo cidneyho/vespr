@@ -1,0 +1,13 @@
+# Fine-tuning settings for YOLO26n-seg. Every run copies this into its run.json.
+model: yolo26n-seg.pt   # pretrained on COCO; every run starts from it
+image_sizes: [320, 416]
+epochs: 200
+patience: 30            # stop after 30 epochs without a better validation fitness
+batch: 16
+seed: 0
+workers: 8
+hsv_h: 0.0              # hue and saturation do nothing on grayscale IR
+hsv_s: 0.0
+hsv_v: 0.6              # brightness; Ultralytics' default is 0.4
+onnx_opset: 17
+onnx_min_mask_iou: 0.98

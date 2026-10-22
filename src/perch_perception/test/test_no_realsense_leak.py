@@ -21,6 +21,7 @@ CAMERA_FREE_MODULES = [
     'perch_perception.training.extract_frames',
     'perch_perception.training.import_labels',
     'perch_perception.training.contact_sheet',
+    'perch_perception.training.train',
 ]
 
 

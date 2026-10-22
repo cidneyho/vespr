@@ -4,7 +4,8 @@ These commands turn recorded `.bag` clips into a trained YOLO26n-seg branch segm
 Run them from `src/perch_perception/`. Nothing outside `training/` imports this folder, so the
 training libraries never reach the drone.
 
-Install the extra packages first:
+Install the extra packages first (on the 5090 server, install PyTorch before them; see Setting up
+the server):
 
 ```bash
 python -m pip install -r requirements-training.txt
@@ -39,12 +40,15 @@ python -m perch_perception.training.extract_frames --domain outdoor ~/vespr_reco
 # upload vespr_dataset/to_label/<batch>.zip to the labeling tool, label, export
 python -m perch_perception.training.import_labels ~/Downloads/<export>.zip
 python -m perch_perception.training.contact_sheet
-rsync -a ~/vespr_dataset/ <server>:vespr_dataset/
+rsync -au ~/vespr_dataset/ <server>:vespr_dataset/
 
 # server, in tmux
 python -m perch_perception.training.train
 python -m perch_perception.training.evaluate <run>
 python -m perch_perception.training.export_model <run>
+
+# Mac, afterwards: bring the runs back, so the leakage guard knows which clips they used
+rsync -au <server>:vespr_dataset/runs/ ~/vespr_dataset/runs/
 ```
 
 Each step is described below as it is written.
@@ -138,3 +142,125 @@ The frames are picked from every labeled frame, whatever its split, `hold` clips
 because looking at labels is not scoring. The same `--seed` always picks the same frames, so a
 sheet can be made again after fixing labels; a new seed shows other frames. A `--count` larger
 than the number of labeled frames draws all of them.
+
+## Setting up the server
+
+Training runs on the 5090 server over SSH, inside `tmux`, so a dropped connection does not stop
+it. Once, on the server, with Python 3.11:
+
+```bash
+git clone <repo url> ~/vespr && cd ~/vespr/src/perch_perception
+python3.11 -m venv ~/vespr-venv && source ~/vespr-venv/bin/activate
+nvidia-smi                       # "CUDA Version" in the corner must be 13.0 or newer
+python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+python -m pip install -r requirements-training.txt
+python -c "import torch; print(torch.cuda.get_device_name(0))"     # prints the 5090
+```
+
+Install PyTorch first, from pytorch.org's own index, so pip does not install a build for another
+GPU. The 5090 is a Blackwell GPU, which needs a CUDA 12.8 or newer build. On 2026-10-22,
+PyTorch 2.14.1 had CUDA 13.0 (`cu130`) and 13.2 (`cu132`) builds but no 12.8 build (`cu128`
+stops at 2.11). If `nvidia-smi` shows a CUDA version below 13.0, update the NVIDIA driver, or
+use `cu128`, which installs PyTorch 2.11. This line has not been tried on our server yet.
+
+The first training run downloads the pretrained weights into the current folder
+(`yolo26n-seg.pt`, and `weights/yolo26n.pt` on a GPU). `src/perch_perception/.gitignore`
+ignores every `.pt` file, so they never go into git and do not mark later runs `dirty`.
+
+Ultralytics sends anonymous usage data by default. To turn that off on a machine, run
+`yolo settings sync=False` once.
+
+## Moving the dataset to the server and back
+
+The Mac holds the dataset; the server gets a copy. Before training, send it over with `rsync`,
+which copies only what changed:
+
+```bash
+rsync -au ~/vespr_dataset/ <server>:vespr_dataset/
+```
+
+After training, bring the run folders back:
+
+```bash
+rsync -au <server>:vespr_dataset/runs/ ~/vespr_dataset/runs/
+```
+
+`-u` skips every file that is newer on the receiving side. Without it, sending the dataset after
+pulling a run that was still training would replace that run's final weights on the server with
+the Mac's older copy.
+
+Do this every time. The leakage guard reads `runs/*/run.json` to know which clips were used, so a
+run left only on the server does not protect its clips on the Mac. Never add `--delete`: it
+would remove runs from one side that only the other side has. For the same reason, never delete
+a run folder: removing `runs/<run>/`, or its `run.json`, erases the guard's record of which clips
+that run used. To free space, delete its weights, but keep at least `run.json`.
+
+## 4. Train
+
+```bash
+python -m perch_perception.training.train                      # 320 and 416, on GPU 0
+python -m perch_perception.training.train --sizes 416 --device 0
+```
+
+Run it on the server inside `tmux` (`tmux new -A -s train`). It trains one run per image size, one
+after the other, with the settings in `config/training.yaml` (`--config` picks another file).
+`--sizes` replaces the config's `image_sizes`, and `--device` is a GPU index or `cpu`.
+
+Before Ultralytics starts, each run:
+
+- refuses to start if a clip marked `hold` or `test` was used by an earlier run
+- stops with an error if the `train` or the `val` clips have no labeled frames yet (`val` frames
+  are what Ultralytics scores each epoch on)
+- gets a folder `runs/<YYYY-MM-DD>_<size>_<nn>/` in the dataset folder, numbered from `01` per
+  day and size, with `train.txt` and `val.txt` (the image paths), `data.yaml` for Ultralytics and
+  `run.json`
+
+`run.json` is written before training, so a run that crashes still counts as having used its
+clips. It records the run's name and image size, when it was made, the git commit and whether
+the working tree had uncommitted changes (`dirty`), the whole config, and the train and val clips
+with their labeled frame counts. When training finishes, it also records the Ultralytics and
+PyTorch versions and the GPU.
+
+Every run starts from the COCO-pretrained `yolo26n-seg.pt`, never from an earlier run. Ultralytics
+downloads it into the current folder on the first run, and on a GPU it also downloads
+`weights/yolo26n.pt` for its mixed-precision check (both git-ignored, see Setting up the
+server). Ultralytics stops early when its validation fitness (mostly mask mAP) has not
+improved for `patience` epochs, and keeps the best epoch as `weights/best.pt`. It saves its
+curves, `results.csv` and sample images in the same run folder. It also writes `labels.cache`
+in the dataset folder, which it rebuilds when the labels change.
+
+Augmentation: hue and saturation are off, because they do nothing on grayscale IR, and brightness
+(`hsv_v`) is 0.6, stronger than Ultralytics' 0.4, for lighting. Contrast is not augmented.
+Ultralytics 8.4.184 has no contrast setting of its own; contrast would take an Albumentations
+transform passed as `augmentations=`, and installing `albumentations` also installs
+`opencv-python-headless` next to our `opencv-python`: two packages that both provide `cv2` and
+overwrite each other's files.
+
+The images are 8-bit grayscale PNGs, and Ultralytics loads them with OpenCV as three identical
+channels, which is what the pretrained model expects. **Inference on the drone must feed frames
+the same way**: the left IR image copied into three identical channels, never a single channel
+and never a colour image. Each frame must also be letterboxed to the run's square image size, as
+the ONNX file expects: scaled to fit the square, keeping its shape, with the rest padded in gray
+(114, as Ultralytics pads it).
+
+To check the code path without a GPU, run `python -m pytest test/test_train.py` on the Mac. It
+trains for one epoch on the CPU, on a tiny generated dataset.
+
+## Training on Colab instead
+
+If the server is unavailable, the same command runs on Colab Pro with a GPU runtime. Keep a copy
+of `vespr_dataset` in Google Drive, then in a notebook cell:
+
+```python
+from google.colab import drive; drive.mount('/content/drive')
+!git clone <repo url> /content/vespr
+!cp -r "/content/drive/MyDrive/vespr_dataset" /content/vespr_dataset
+%cd /content/vespr/src/perch_perception
+!pip install -r requirements-training.txt
+!python -m perch_perception.training.train --dataset /content/vespr_dataset
+!cp -r /content/vespr_dataset/runs/. "/content/drive/MyDrive/vespr_dataset/runs/"
+```
+
+Colab already has a CUDA build of PyTorch, so do not install another one. Copy the runs back to
+Drive before the runtime ends (the last line), and from there into `~/vespr_dataset/runs/` on the
+Mac, for the same reason as `rsync` above.
