@@ -14,7 +14,8 @@ estimate and no diameter estimate, and the ROS node publishes nothing.
 - [The frame every source yields](#the-frame-every-source-yields-frame_sourcepy)
 - [Camera and bag sources](#camera-and-bag-sources-realsense_sourcepy)
 - [Running a source in a child process](#running-a-source-in-a-child-process-process_sourcepy)
-- [The clip recorder](#the-clip-recorder-recordpy)
+- [The clip recorder](#the-clip-recorder-data_collectionrecordpy)
+- [Keeping clips on Google Drive](#keeping-clips-on-google-drive-data_collectionclip_storagepy)
 - [Reading a source from the command line](#reading-a-source-from-the-command-line-runpy)
 - [The ROS node](#the-ros-node-perception_nodepy)
 - [The branch distance script](#the-branch-distance-script-branch_distancepy)
@@ -39,7 +40,7 @@ estimate and no diameter estimate, and the ROS node publishes nothing.
      prints a depth summary     runs a source in a child          and pose modules)
                                 process, frames over a pipe
                                            |
-                                       record.py
+                               data_collection/record.py
                          browser page, .bag + .mp4 per clip
 ```
 
@@ -141,6 +142,9 @@ Replays a `.bag` recording. It needs no camera.
   and no frame has arrived for 1 second.
 - Intrinsics come from the recording, so a bag replays with the calibration it was recorded
   with.
+- Each depth image comes paired with the left IR image of the same exposure. On real clips this
+  was checked with librealsense 2.54.2 (Mac) and 2.58.4 (Jetson): every pair has identical
+  timestamps. A clip recorded on the Jetson replays on the Mac.
 
 ### The shared frame loop
 
@@ -207,15 +211,17 @@ itself a `FrameSource`.
 Messages on the pipe are `(kind, payload)` pairs: `('opened', fps)`, `('frame', Frame)`,
 `('error', message)` and `('closed', None)`.
 
-## The clip recorder (`record.py`)
+## The clip recorder (`data_collection/record.py`)
 
 ```bash
-python -m perch_perception.record [--out FOLDER] [--port 8080] [--width 848] [--height 480] [--fps N]
+python -m perch_perception.data_collection.record --domain indoor|outdoor [--out FOLDER] [--port 8080] [--width 848] [--height 480] [--fps N]
 ```
 
 A camera loop plus a small web server. Open `http://localhost:8080` to get a live view of the
 left IR image and a Record / Stop button. Run it on the Jetson and reach the page through an SSH
-tunnel. Do not run it on John's Mac, which kernel-panicked twice while it streamed.
+tunnel (see "Recording clips" in the package README). Do not run it on John's Mac, which
+kernel-panicked twice while it streamed. At startup it prints the computer's clock, which names
+the clips.
 
 ### Sessions
 
@@ -232,7 +238,9 @@ clip ends, for whatever reason, the recorder goes back to preview.
 ### What one clip produces
 
 Files are named by the clip's start time, for example `2026-10-10T14-32-05`. Colons are left out
-so the name is valid on every file system.
+so the name is valid on every file system. If the folder already has a clip by that name, as
+when a Jetson without internet has the wrong time, `free_clip_name` adds `-2`, `-3` and so on,
+so an earlier `.bag` is never written over.
 
 | File | Contents |
 |---|---|
@@ -244,11 +252,12 @@ or refuse to record over USB 2. Clips made with it so far are practice clips.
 
 ### Where clips go
 
-By default `~/vespr_recordings`, directly in the home folder, because macOS can sync Desktop and
-Documents to iCloud Drive and clips are hundreds of megabytes. Under `sudo` the folder is still
-the home folder of the person who ran `sudo` (from `SUDO_USER`). The folder is created if it is
-missing. Under `sudo` the folder and both files are handed back to that person (from `SUDO_UID`
-and `SUDO_GID`), so they don't end up owned by root.
+`--domain` (required) picks `~/vespr_recordings/indoor` or `~/vespr_recordings/outdoor`, the
+folders `clip_storage` uploads from; `--out` overrides it. They sit directly in the home folder,
+because macOS can sync Desktop and Documents to iCloud Drive and clips are hundreds of megabytes.
+Under `sudo` the folder is still the home folder of the person who ran `sudo` (from `SUDO_USER`).
+The folder is created if it is missing. Under `sudo` the folder and both files are handed back to
+that person (from `SUDO_UID` and `SUDO_GID`), so they don't end up owned by root.
 
 ### Recorder states
 
@@ -286,6 +295,38 @@ no answer.
 Ctrl+C in the terminal ends the current session. A recording in progress is finished and closed
 properly. Then the web server shuts down.
 
+## Keeping clips on Google Drive (`data_collection/clip_storage.py`)
+
+```bash
+python -m perch_perception.data_collection.clip_storage upload | download NAME... | download --missing | cleanup [--yes]
+    --domain indoor|outdoor [--folder FOLDER] [--remote REMOTE]
+```
+
+Copies clips between a local folder and a folder in John's Google Drive, using rclone. The
+required `--domain` picks both: `indoor` means `~/vespr_recordings/indoor` and
+`vespr-drive:VESPR Recordings/Indoors`; `outdoor` means `.../outdoor` and `.../Outdoors`. Setup is
+in the [package README](../README.md#google-drive-storage).
+
+- **Clips.** A clip is every file directly in the folder that shares a name and ends in `.bag`,
+  `.mp4` or `.json`. Hidden files and other extensions are ignored.
+- **Still being written.** A clip with any file changed in the last 60 seconds is skipped by
+  `upload` and `cleanup`.
+- **`upload`** lists the Drive folder once (names, sizes, MD5 checksums), then copies each local
+  file that is missing there with `rclone copyto --ignore-existing`. rclone checks each copy's
+  checksum. A file already there with the same size is skipped. A clip that has a file there
+  with the same name but a different size is a conflict, and none of it is uploaded.
+- **`download`** works the same way in the other direction. A file name such as `X.bag` is taken
+  to mean clip `X`. `--missing` fetches every clip file that is not local.
+- **`cleanup`** computes each local file's MD5 in one-megabyte blocks and compares it with the
+  Drive's. Only clips whose every file matches are listed as safe, and deleted with `--yes`.
+- **Output.** `upload` and `download` print `uploading <clip> (...)...` before each clip and
+  `uploaded <clip> (...)` after it, one line at a time even when run over ssh. Any command refuses
+  to run when `--remote` is the same local folder as `--folder`.
+- **Exit codes.** 0 when everything that should have moved moved; 1 when a clip failed,
+  conflicted or was not found, when a deletion failed, or when rclone is not set up.
+- **Structure.** Plain-Python functions decide what to do. The `Rclone` class is the only code
+  that runs rclone, and the commands take it as an argument, so tests use an in-memory stand-in.
+
 ## Reading a source from the command line (`run.py`)
 
 ```bash
@@ -320,7 +361,7 @@ Unlike the recorder, `run.py` opens the live camera in its own process, not thro
 ROS wiring only, and the only module that imports `rclpy`. It starts, logs
 `perception_node started`, and spins until Ctrl+C or shutdown. It has no subscribers, publishers
 or parameters yet. Those wait on the topics, message types and frames marked TBD in
-[`docs/interfaces.md`](../../../docs/interfaces.md).
+[`docs/system-map/`](../../../docs/system-map/README.md).
 
 It is installed as the `perception_node` executable (`ros2 run perch_perception
 perception_node`) and started by `launch/perception.launch.py`.
@@ -338,23 +379,32 @@ Unlike the rest of the package, it imports `pyrealsense2` directly and has no te
 
 ## Tests
 
-63 tests, run with `python -m pytest` from the package folder. None of them needs a camera.
+132 tests, run with `python -m pytest` from the package folder. All pass on the Mac and on the
+Jetson. None of them needs a camera
+or a network.
 
 | File | Tests | What it checks |
 |---|---|---|
 | `test_frame_source.py` | 6 | Depth scaling, zero kept as unknown, `float32`, the `Frame` unpacks in the agreed order, iteration and `with` blocks |
 | `test_realsense_source.py` | 12 | `BagSource` end to end on a synthetic bag: every frame once (the buffer copy), depth in meters, zeros kept, the image is left IR, timestamps in seconds, recorded intrinsics, no IMU, missing file. Also the USB frame rate choice and the macOS IMU refusal. |
 | `test_process_source.py` | 10 | Frames and images cross the process boundary, `fps` is passed back, open errors and open timeouts end the child, the source is closed before the child exits, Ctrl+C does not kill the child early, a frozen child is killed and reported, a dying child is reported |
-| `test_record.py` | 22 | Clip naming, the default folder, giving files back under `sudo`, preview and recording sessions, the preview video's frame count, status states, error handling, the camera loop following the button, and every web endpoint |
+| `test_record.py` | 26 | Clip naming, a taken clip name getting `-2`, `--domain` and the folders, giving files back under `sudo`, preview and recording sessions, the preview video's frame count, status states, error handling, the camera loop following the button, and every web endpoint |
 | `test_run.py` | 9 | The depth summary ignores zeros, the summary line, frame counting and `--max-frames`, and replaying a synthetic bag through `main()` |
-| `test_no_realsense_leak.py` | 4 | `frame_source`, `process_source`, `record` and `run` import without pulling in `pyrealsense2` (checked in a fresh interpreter) |
+| `test_clip_storage.py` | 60 | Clip grouping, still-being-written, copy and delete decisions, the rclone listing format, `upload`, `download`, `cleanup`, the command line, an unreadable clip, Ctrl+C, partial downloads and a login that expires mid-run, all with an in-memory rclone |
+| `test_clip_storage_rclone.py` | 4 | `upload`, `download` and `cleanup` with the real rclone between two local folders (skipped where rclone is missing) |
+| `test_no_realsense_leak.py` | 5 | `data_collection.clip_storage`, `data_collection.record`, `frame_source`, `process_source` and `run` import without pulling in `pyrealsense2` (checked in a fresh interpreter) |
 
 Helpers:
 
 - `test/fake_source.py` holds in-memory sources, including ones that are slow to open, freeze on
   close or die part-way, for the process tests.
+- `test/fake_rclone.py` is an in-memory stand-in for rclone and the Drive, for the
+  `clip_storage` tests.
 - `test/synthetic_bag.py` writes a small `.bag` with known contents using librealsense's software
-  device, so bag replay is tested on the real playback path without a camera.
+  device, so bag replay is tested on the real playback path without a camera. It writes each IR
+  frame before its depth frame: librealsense 2.58 pairs a depth frame with the newest IR frame
+  already written, so the other order pairs depth `i` with IR `i - 1`. Bags from a real camera
+  pair correctly either way.
 
 Tests that need `pyrealsense2` or `cv2` are skipped where those are missing. In the dev
 container, where `pyrealsense2` is not installed, the bag tests do not run.
@@ -364,20 +414,25 @@ container, where `pyrealsense2` is not installed, the bag tests do not run.
 | Part | Real camera or real data | Result |
 |---|---|---|
 | `LiveSource` through `run.py` | Jetson Orin Nano, D435i on USB 2, 2026-10-10 | 30 frames in 5.0 s at 10 fps, chosen from the USB link. With `--imu`, every frame carried an IMU sample. |
-| `BagSource` | Synthetic bags in the tests. One real clip, `2026-10-11T22-24-34.bag` (173 frames). | Replays |
+| `BagSource` | Synthetic bags in the tests. Real clips from the Mac (2026-10-11) and the Jetson (2026-10-19). | Replays on both. Depth and IR of each frame have identical timestamps. |
 | Recorder, first version (camera opened in-process) | John's Mac, 2026-10-11 | Recorded one good clip, then froze while closing the camera |
-| Recorder, current version (through `ProcessSource`) | Never run against a camera | Unverified |
+| Recorder, current version (through `ProcessSource`) | Jetson, D435i on USB 2, controlled from the Mac over the USB-C cable, 2026-10-19 | Two indoor clips at 848x480 and 10 fps (106 and 49 frames). No freezes. |
+| `clip_storage` | Jetson to Google Drive and Drive to the Mac, 2026-10-19 | Uploaded 198 MB in 49 s with matching checksums; a second `upload` sent nothing; the downloaded clip replayed on the Mac. `cleanup` not yet run on real clips. |
 
 The macOS findings that shaped `ProcessSource` and `close()` came from `pyrealsense2-macosx`
-2.54.2 on John's Mac. They have not been checked on the Jetson.
+2.54.2 on John's Mac. On the Jetson (2.58.4) the recorder opened and closed the camera through
+`ProcessSource` for every preview and recording session without freezing, but whether an
+in-process close would also freeze there has not been tested.
 
 ## Not implemented yet
 
 - Branch detection (classical line-segment baseline, then a learned detector)
 - Mask to 3D branch axis, diameter, confidence
-- Publishing anything from the ROS node, and a `BranchPose` message
+- Publishing anything from the ROS node. NAMING.md proposes `branch_pose` as a
+  `geometry_msgs/msg/PoseStamped`, not a custom message type
 - A video-file-plus-intrinsics-JSON source
 - The recorder's sidecar JSON (camera details, scene metadata, emitter state, git commit), its
   USB 2 refusal, and IMU recording
 - Depth preset selection (the camera runs its default preset)
+- A comparison clip at 1280x720 on USB 3, against today's 848x480
 - IMU to image timestamp alignment

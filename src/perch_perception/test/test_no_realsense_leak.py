@@ -12,9 +12,10 @@ import pytest
 
 # Add the detection and pose modules here when they are written.
 CAMERA_FREE_MODULES = [
+    'perch_perception.data_collection.clip_storage',
     'perch_perception.frame_source',
     'perch_perception.process_source',
-    'perch_perception.record',
+    'perch_perception.data_collection.record',
     'perch_perception.run',
 ]
 

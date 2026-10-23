@@ -79,8 +79,12 @@ def write_synthetic_bag(path):
                         dtype=np.uint16)
         depth[0, :] = 0
         ir = np.full((HEIGHT, WIDTH), i, dtype=np.uint8)
-        _send(sensor, depth_profile, depth, 2, i)
+        # IR goes first. librealsense 2.58 pairs each depth frame with the
+        # newest IR frame already written, so depth first would pair depth i
+        # with IR i - 1. 2.54 pairs them right either way, and so does 2.58
+        # on bags from a real camera.
         _send(sensor, ir_profile, ir, 1, i)
+        _send(sensor, depth_profile, depth, 2, i)
         time.sleep(1.0 / FPS)
 
     recording_sensor.stop()

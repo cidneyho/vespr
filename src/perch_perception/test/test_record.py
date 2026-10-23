@@ -17,7 +17,7 @@ import pytest
 cv2 = pytest.importorskip('cv2')
 
 from fake_source import ListSource, make_frame  # noqa: E402
-from perch_perception import record  # noqa: E402
+from perch_perception.data_collection import record  # noqa: E402
 
 NOW = datetime(2026, 10, 10, 14, 32, 5)
 CLIP = '2026-10-10T14-32-05'
@@ -343,3 +343,37 @@ def test_the_stream_serves_the_latest_camera_image(served):
 
     assert response.headers.get_content_type() == 'multipart/x-mixed-replace'
     assert b'Content-Type: image/jpeg' in start
+
+
+def test_the_domain_is_required():
+    with pytest.raises(SystemExit):
+        record.parse_args([])
+
+
+def test_the_domain_picks_the_clip_folder(monkeypatch):
+    monkeypatch.delenv('SUDO_USER', raising=False)
+
+    args = record.parse_args(['--domain', 'outdoor'])
+
+    assert args.out == os.path.expanduser('~/vespr_recordings/outdoor')
+
+
+def test_out_replaces_the_domain_folder():
+    args = record.parse_args(['--domain', 'indoor', '--out', '/clips'])
+
+    assert args.out == '/clips'
+
+
+def test_a_clip_never_replaces_an_earlier_clip_with_the_same_name(tmp_path):
+    # Without internet the Jetson cannot set its clock, so a new clip can get
+    # the start time, and so the name, of one recorded earlier.
+    (tmp_path / (CLIP + '.bag')).write_bytes(b'earlier clip')
+    (tmp_path / (CLIP + '-2.mp4')).write_bytes(b'earlier clip')
+    camera = FakeCamera()
+    recorder = make_recorder(camera, tmp_path)
+    recorder.start()
+
+    recorder.run_session()
+
+    assert camera.opened_with == [str(tmp_path / (CLIP + '-3.bag'))]
+    assert (tmp_path / (CLIP + '.bag')).read_bytes() == b'earlier clip'
