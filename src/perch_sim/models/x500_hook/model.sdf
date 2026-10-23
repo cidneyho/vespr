@@ -11,6 +11,7 @@
   Camera: RealSense D435i stand-in on camera_link, 12.0 cm forward,
     24.2 cm up, tilted 0 deg up.
     69 deg wide, 1280 x 720 at 30 Hz.
+  Optical flow and a rangefinder, both looking down (mounts are placeholders from PX4's x500_flow).
 -->
 <sdf version="1.9">
   <model name="x500_hook">
@@ -323,6 +324,47 @@
     <joint name="camera_joint" type="fixed">
       <parent>base_link</parent>
       <child>camera_link</child>
+    </joint>
+
+    <!-- Optical flow, looking down. PX4 reads /link/flow_link/sensor/optical_flow/optical_flow -->
+    <include merge="true">
+      <uri>model://optical_flow</uri>
+      <pose relative_to="base_link">0.03000 0.00000 -0.10000 0 0 0</pose>
+    </include>
+    <joint name="optical_flow_joint" type="fixed">
+      <parent>base_link</parent>
+      <child>flow_link</child>
+    </joint>
+
+    <!-- Rangefinder, looking down. PX4 reads /link/lidar_sensor_link/sensor/lidar/scan -->
+    <link name="lidar_sensor_link">
+      <!-- Pitched 90 deg so the beam points down -->
+      <pose relative_to="base_link">0.00000 0.00000 -0.05000 0 1.5708 0</pose>
+      <inertial>
+        <mass>0.001</mass>
+        <inertia><ixx>2.50e-06</ixx><iyy>2.50e-06</iyy><izz>2.50e-06</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+      <visual name="rangefinder_visual">
+        <geometry><box><size>0.02 0.03 0.02</size></box></geometry>
+        <material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material>
+      </visual>
+      <sensor name="lidar" type="gpu_lidar">
+        <pose>0 0 0 3.14 0 0</pose>
+        <update_rate>50</update_rate>
+        <ray>
+          <scan>
+            <horizontal><samples>1</samples><resolution>1</resolution><min_angle>0</min_angle><max_angle>0</max_angle></horizontal>
+            <vertical><samples>1</samples><resolution>1</resolution><min_angle>0</min_angle><max_angle>0</max_angle></vertical>
+          </scan>
+          <range><min>0.1</min><max>100.0</max><resolution>0.01</resolution></range>
+        </ray>
+        <always_on>1</always_on>
+        <visualize>true</visualize>
+      </sensor>
+    </link>
+    <joint name="lidar_sensor_joint" type="fixed">
+      <parent>base_link</parent>
+      <child>lidar_sensor_link</child>
     </joint>
   </model>
 </sdf>

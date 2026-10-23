@@ -37,3 +37,16 @@ perch_approach:
         rate: 30.0            # Hz
         near: 0.1             # m, closest and furthest the sim renders
         far: 10.0
+      # PLACEHOLDER mounts, copied from PX4's x500_flow. Replace with the real positions.
+      # Optical flow sensor, looking down. Position from the reference point, body frame
+      flow:
+        x: 0.03
+        y: 0.0
+        z: -0.1
+      # Rangefinder (single-beam lidar), looking down
+      rangefinder:
+        x: 0.0
+        y: 0.0
+        z: -0.05
+        min_range: 0.1        # m
+        max_range: 100.0      # m
