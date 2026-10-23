@@ -1,4 +1,4 @@
-"""Pose maths for mocap_sim, without numpy.
+"""Pose maths for the vespr_sim nodes, without numpy.
 
 A pose is (position, orientation): position (x, y, z) in m, orientation a unit quaternion (x, y, z, w).
 """
@@ -52,6 +52,29 @@ def from_rotation_vector(r):
         return (0.0, 0.0, 0.0, 1.0)
     s = math.sin(angle / 2) / angle
     return (r[0] * s, r[1] * s, r[2] * s, math.cos(angle / 2))
+
+
+def to_rotation_vector(q):
+    """Axis times angle (rad) of quaternion q, taking the short way round."""
+    x, y, z, w = q
+    if w < 0:
+        x, y, z, w = -x, -y, -z, -w
+    s = math.sqrt(x * x + y * y + z * z)
+    if s < 1e-12:
+        return (0.0, 0.0, 0.0)
+    angle = 2 * math.atan2(s, w)
+    return (x / s * angle, y / s * angle, z / s * angle)
+
+
+def yaw(q):
+    """Heading of quaternion q about z, rad."""
+    x, y, z, w = q
+    return math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+
+
+def from_yaw(angle):
+    """Quaternion for a turn of angle rad about z."""
+    return (0.0, 0.0, math.sin(angle / 2), math.cos(angle / 2))
 
 
 def add_noise(pose, position_sigma, orientation_sigma, rng):

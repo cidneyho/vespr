@@ -58,6 +58,7 @@ The node reads both **directly through gz-transport** (Gazebo's Python bindings)
 | `orientation_noise` | 0.0 | Gaussian noise on each rotation axis, standard deviation in rad |
 | `latency` | 0.0 | Delay before publishing, s. The stamp stays the sample time |
 | `drop_rate` | 0.0 | Chance (0 to 1) that a sample is dropped |
+| `seed` | 0 | Random seed; 0 means a new one each run. Set it to repeat a run's noise exactly |
 
 The drone and branch get independent noise. A dropped sample is dropped for both bodies, as when a real mocap frame is lost.
 

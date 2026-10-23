@@ -3,7 +3,8 @@ import random
 
 import pytest
 
-from vespr_sim.poses import add_noise, compose, rotate
+from vespr_sim.poses import add_noise, compose, from_yaw, rotate, to_rotation_vector
+from vespr_sim.poses import yaw as heading
 
 IDENTITY = (0.0, 0.0, 0.0, 1.0)
 
@@ -60,3 +61,16 @@ def test_noise_has_the_requested_spread():
     angles = [2 * math.acos(min(1.0, add_noise(pose, 0.0, 0.02, rng)[1][3])) for _ in range(2000)]
     # The angle of a 3-axis Gaussian rotation averages sigma * sqrt(8 / pi)
     assert sum(angles) / len(angles) == pytest.approx(0.02 * math.sqrt(8 / math.pi), rel=0.1)
+
+
+def test_heading_and_from_yaw():
+    assert heading(yaw(0.7)) == pytest.approx(0.7)
+    assert heading(compose(((0, 0, 0), yaw(-2.0)), ((0, 0, 0), pitch(0.3)))[1]) == pytest.approx(-2.0)
+    assert from_yaw(0.7) == pytest.approx(yaw(0.7))
+
+
+def test_to_rotation_vector():
+    assert to_rotation_vector(IDENTITY) == pytest.approx((0, 0, 0))
+    assert to_rotation_vector(pitch(0.4)) == pytest.approx((0, 0.4, 0))
+    # -q is the same rotation: still the short way round
+    assert to_rotation_vector(tuple(-c for c in yaw(0.4))) == pytest.approx((0, 0, 0.4))

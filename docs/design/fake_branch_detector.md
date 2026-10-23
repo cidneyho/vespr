@@ -70,6 +70,7 @@ Same as `mocap_sim`: read Gazebo directly over gz-transport, finding entities by
 | `position_noise`, `orientation_noise` | 0.0, 0.0 | Gaussian noise, m and rad |
 | `latency` | 0.0 | Delay before publishing, s |
 | `drop_rate` | 0.0 | Chance (0 to 1) that a sample is dropped |
+| `seed` | 0 | Random seed; 0 means a new one each run. Set it to repeat a run's noise exactly |
 
 ## Package: `vespr_sim`
 

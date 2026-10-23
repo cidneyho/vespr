@@ -15,6 +15,7 @@ ARGS = {
     'rate': ('120.0', 'Maximum publish rate, Hz'),
     'position_noise': ('0.0', 'Gaussian position noise, standard deviation in m'),
     'orientation_noise': ('0.0', 'Gaussian noise about each axis, standard deviation in rad'),
+    'seed': ('0', 'Random seed; 0 picks a new one each run'),
     'latency': ('0.0', 'Delay before publishing, s'),
     'drop_rate': ('0.0', 'Chance (0 to 1) that a sample is dropped'),
 }

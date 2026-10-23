@@ -33,8 +33,10 @@ class SimSensor(Node):
         self.orientation_noise = self.declare_parameter('orientation_noise', 0.0).value
         self.latency = self.declare_parameter('latency', 0.0).value
         self.drop_rate = self.declare_parameter('drop_rate', 0.0).value
+        # 0 means a new seed each run; set one to repeat a run's noise exactly
+        seed = self.declare_parameter('seed', 0).value
 
-        self.rng = random.Random()
+        self.rng = random.Random(seed or None)
         self.lock = threading.Lock()  # gz-transport calls back on its own threads
         self.branch = None  # perch_point in the world, read once from the static scene
         self.limit = RateLimit(self.rate)
