@@ -19,6 +19,7 @@ setup(
     entry_points={
         'console_scripts': [
             'mocap_sim = vespr_sim.mocap_sim:main',
+            'fake_branch_detector = vespr_sim.fake_branch_detector:main',
         ],
     },
 )

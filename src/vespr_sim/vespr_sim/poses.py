@@ -37,6 +37,14 @@ def compose(parent, child):
     )
 
 
+def inverse(pose):
+    """The pose that undoes `pose`: compose(inverse(a), b) is b seen from a."""
+    (x, y, z), (qx, qy, qz, qw) = pose
+    q = (-qx, -qy, -qz, qw)
+    p = rotate(q, (x, y, z))
+    return (-p[0], -p[1], -p[2]), q
+
+
 def from_rotation_vector(r):
     """Quaternion for a rotation of |r| rad about the axis r."""
     angle = math.sqrt(sum(c * c for c in r))
