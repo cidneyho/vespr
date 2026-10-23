@@ -27,6 +27,34 @@ How the node flies the drone:
 
 To see what PX4 is publishing: `ros2 topic list`, then for example `ros2 topic echo /fmu/out/vehicle_local_position`.
 
+## Fly by hand: flight_cli
+
+`flight_cli` lets you fly by typing commands. Start the sim and the Agent as in steps 1 and 2 above, then:
+
+```bash
+ros2 run perch_flight flight_cli
+```
+
+```
+vespr> takeoff               arm and climb to 1.5 m (or takeoff 1.0)
+vespr> forward 0.5           relative to the nose points: forward, back, left, right, up, down
+vespr> yaw 90                turn in place, + clockwise, - counterclockwise
+vespr> goto 0.5 0 1.5        north, east, altitude, relative to the takeoff spot
+vespr> speed 0.2             cruise speed for the next moves, up to 1 m/s
+vespr> hold                  stop where you are
+vespr> status
+vespr> land
+vespr> quit
+```
+
+Type `help` for the full list. Things to know:
+- **One move at a time.** A new move is refused until the last one arrives. Use `hold` to stop a move early.
+- **Moves are smooth.** The target slides from the last target to the new one at `speed`. Each setpoint carries the target's velocity too, so PX4 follows the target instead of lagging behind it.
+- **Pilot takeover.** If PX4 leaves offboard mode in the air (RC mode switch or a failsafe), the CLI stops commanding and says so. `hold` takes control back and holds where the drone is.
+- **Ctrl+C or `quit` lands first**, and exits once PX4's land mode has the drone. Press Ctrl+C a second time to exit right away; PX4 then treats it as lost offboard (`COM_OBL_RC_ACT`).
+
+The flying itself is in [perch_flight/commander.py](perch_flight/commander.py) (`Commander`), and the CLI only parses what you type. Other nodes, such as the perch mission, can use `Commander` the same way.
+
 ## References
 
 - [PX4 ROS 2 offboard control example](https://docs.px4.io/main/en/ros2/offboard_control)
