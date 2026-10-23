@@ -8,6 +8,9 @@
     above the body origin, opening facing 0 deg clockwise from the nose.
   Gate: swings 180 deg round the ring to close it in about 1.0 s.
     Gazebo topic /hook/close (gz.msgs.Boolean): true closes, false opens.
+  Camera: RealSense D435i stand-in on camera_link, 12.0 cm forward,
+    24.2 cm up, tilted 0 deg up.
+    69 deg wide, 1280 x 720 at 30 Hz.
 -->
 <sdf version="1.9">
   <model name="x500_hook">
@@ -293,5 +296,33 @@
       <topic>/hook/joint_state</topic>
       <joint_name>hook_gate_joint</joint_name>
     </plugin>
+
+    <!-- RealSense D435i stand-in. Images on /camera/image, /camera/depth_image, /camera/camera_info -->
+    <link name="camera_link">
+      <pose relative_to="base_link">0.12000 0.03000 0.24200 0.00000 -0.00000 0.00000</pose>
+      <inertial>
+        <mass>0.072</mass>
+        <inertia><ixx>1.80e-04</ixx><iyy>1.80e-04</iyy><izz>1.80e-04</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+      <visual name="camera_visual">
+        <geometry><box><size>0.025 0.090 0.025</size></box></geometry>
+        <material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material>
+      </visual>
+      <sensor name="realsense_d435i" type="rgbd_camera">
+        <always_on>1</always_on>
+        <update_rate>30.0</update_rate>
+        <topic>camera</topic>
+        <camera>
+          <horizontal_fov>1.20428</horizontal_fov>
+          <image><width>1280</width><height>720</height><format>R8G8B8</format></image>
+          <clip><near>0.1</near><far>10.0</far></clip>
+          <depth_camera><clip><near>0.1</near><far>10.0</far></clip></depth_camera>
+        </camera>
+      </sensor>
+    </link>
+    <joint name="camera_joint" type="fixed">
+      <parent>base_link</parent>
+      <child>camera_link</child>
+    </joint>
   </model>
 </sdf>
