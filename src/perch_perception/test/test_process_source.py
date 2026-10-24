@@ -7,6 +7,7 @@ fake_source.py, so no camera is involved.
 import multiprocessing
 import os
 import signal
+import threading
 
 import numpy as np
 import pytest
@@ -101,3 +102,18 @@ def test_a_child_that_dies_is_reported():
 
     with pytest.raises(RuntimeError, match='ended unexpectedly'):
         list(source)
+
+
+def test_ctrl_c_while_the_source_opens_ends_the_child():
+    # The recorder checks whether a .bag exists once opening fails, so the child that would
+    # create it must be gone by then, however opening ended.
+    # A real SIGINT, as Ctrl+C sends, once the child is running. It wakes the wait for the child.
+    timer = threading.Timer(2.0, os.kill, (os.getpid(), signal.SIGINT))
+    timer.start()
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            ProcessSource(fake_source.open_slow_source, (30,))
+    finally:
+        timer.cancel()
+
+    assert multiprocessing.active_children() == []

@@ -84,10 +84,13 @@ class ProcessSource(FrameSource):
             kind, payload = self._receive(open_timeout, 'the source did not open')
             if kind == 'error':
                 raise RuntimeError(payload)
-        except RuntimeError:
-            # However opening failed, end the child. One that is still busy
-            # opening would otherwise keep the camera, and every later
-            # attempt to open it would fail.
+        except BaseException:
+            # However opening failed or was interrupted, Ctrl+C included, end
+            # the child. One that is still busy opening would otherwise keep
+            # the camera, and every later attempt to open it would fail. The
+            # recorder also relies on it: once opening fails, it checks
+            # whether a .bag was created, and a child left running could
+            # still create one.
             self._end_process()
             raise
         self.fps = payload

@@ -215,6 +215,46 @@ def test_a_failed_last_details_write_leaves_the_clip_bad_and_says_so(tmp_path, m
     assert 'No space left' in recorder.status()['error']
 
 
+def test_an_unexpected_error_during_a_clip_leaves_it_bad(tmp_path):
+    def fail():
+        raise ValueError('a bug in the frame loop')
+
+    with pytest.raises(ValueError):
+        record_one_clip(make_recorder(FakeCamera(before_frame=2, callback=fail), tmp_path))
+
+    assert read_details(tmp_path)['bad'] is True
+
+
+def test_ctrl_c_during_a_clip_saves_it_as_good_then_quits(tmp_path):
+    # Ctrl+C is how the recorder is quit. The camera still closes, which finishes the .bag.
+    def interrupt():
+        raise KeyboardInterrupt
+
+    camera = FakeCamera(before_frame=2, callback=interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        record_one_clip(make_recorder(camera, tmp_path))
+
+    assert camera.sources[0].closed
+    assert read_details(tmp_path)['bad'] is False
+
+
+def test_ctrl_c_while_the_camera_closes_leaves_the_clip_bad(tmp_path):
+    # A second Ctrl+C while the camera closes can leave the .bag unfinished.
+    class InterruptedClose(ScriptedSource):
+        def close(self):
+            raise KeyboardInterrupt
+
+    def camera(record_to):
+        open(record_to, 'wb').close()
+        return InterruptedClose([make_frame(0.0, shape=SHAPE)] * 3)
+
+    with pytest.raises(KeyboardInterrupt):
+        record_one_clip(make_recorder(camera, tmp_path))
+
+    assert read_details(tmp_path)['bad'] is True
+
+
 def test_seconds_counts_to_the_last_frame_not_to_the_end_of_the_camera_shutdown(tmp_path):
     class SlowToClose(ScriptedSource):
         def close(self):
@@ -227,6 +267,45 @@ def test_seconds_counts_to_the_last_frame_not_to_the_end_of_the_camera_shutdown(
     record_one_clip(make_recorder(camera, tmp_path))
 
     assert read_details(tmp_path)['seconds'] < 0.4
+
+
+def test_seconds_counts_to_the_last_frame_after_a_camera_error_too(tmp_path):
+    class FailsThenClosesSlowly(ScriptedSource):
+        def close(self):
+            time.sleep(0.5)
+            super().close()
+
+    def fail():
+        raise RuntimeError('frame did not arrive within 5000')
+
+    def camera(record_to):
+        open(record_to, 'wb').close()
+        return FailsThenClosesSlowly([make_frame(0.0, shape=SHAPE)] * 3, 2, fail)
+
+    record_one_clip(make_recorder(camera, tmp_path))
+
+    assert read_details(tmp_path)['seconds'] < 0.4
+
+
+def test_unmarking_after_a_failed_last_write_saves_the_whole_clip(tmp_path, monkeypatch):
+    real_write = record.write_details
+    writes = []
+
+    def fail_the_second_write(path, details):
+        writes.append(path)
+        if len(writes) == 2:
+            raise OSError(28, 'No space left on device')
+        real_write(path, details)
+
+    monkeypatch.setattr(record, 'write_details', fail_the_second_write)
+    recorder = make_recorder(FakeCamera(), tmp_path)
+    record_one_clip(recorder)
+
+    recorder.mark_last_clip_bad(False)
+
+    details = read_details(tmp_path)
+    assert details['bad'] is False
+    assert 'error' not in details
 
 
 def test_the_details_given_with_start_are_saved_with_the_clip(tmp_path):
@@ -274,6 +353,7 @@ def test_a_bag_left_by_a_camera_that_failed_to_start_keeps_its_details_marked_ba
     record_one_clip(make_recorder(camera_that_fails_after_creating_the_bag, tmp_path))
 
     assert read_details(tmp_path)['bad'] is True
+    assert read_details(tmp_path)['error'] == 'the camera stopped while starting'
 
 
 def test_no_details_file_is_written_when_the_camera_fails_to_open(tmp_path):

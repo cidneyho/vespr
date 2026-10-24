@@ -192,8 +192,9 @@ itself a `FrameSource`.
   because the child finds it by importing its module.
 - **Opening.** The constructor returns once the child reports that the source opened. It raises
   `RuntimeError` if the child reports an error, if the child dies, or if nothing is heard within
-  `open_timeout` seconds. In every one of those cases it ends the child first, so a child stuck
-  opening the camera cannot keep hold of it.
+  `open_timeout` seconds. In every one of those cases, and on Ctrl+C while it waits, it ends the
+  child first, so a child stuck opening the camera cannot keep hold of it, or create a `.bag`
+  after the recorder has decided there is none.
 - **Frames.** The child sends every frame back over a one-way pipe. Each `Frame` is pickled, so
   the parent gets its own copy. `frames()` raises `RuntimeError` if no frame arrives within
   `frame_timeout` seconds, or if the child dies (`'the camera process ended unexpectedly'`). It
@@ -273,7 +274,7 @@ The details file:
 | `seconds` | How long the clip is |
 | `site`, `branch`, `light`, `notes` | What was in the page's fields when Record was pressed. Spaces at the ends are trimmed. |
 | `bad` | `true` if the clip was marked bad |
-| `error` | Why the clip is marked bad by itself: the camera's error, or `the recording did not finish` |
+| `error` | Why the clip was marked bad by itself: the camera's error, or `the recording did not finish`. Kept if the clip is unmarked later. |
 
 The fields carry over from clip to clip, so they are typed once per branch. `extract_frames`
 uses `site` and `branch` to keep every clip of a branch in one split (see the training README),
@@ -284,9 +285,17 @@ set to `the recording did not finish`, before the camera starts. Only when the c
 is it written again, as not bad. So a clip cut short by a pulled battery or a killed recorder,
 which may not replay to the end, is never taken for a good one. If the camera fails during the
 clip, it stays bad with the camera's error. If that last write fails (a full disk), the page says
-so and shows the clip as bad, which is what the file says. If the camera fails to start and
-leaves no `.bag`, the `.json` is deleted, because a `.json` alone is no clip. Ctrl+C during a
-clip ends it normally.
+so and shows the clip as bad, which is what the file says; unmarking it then saves the clip's
+full details. If the camera fails to start and leaves no `.bag`, the `.json` is deleted, because a
+`.json` alone is no clip; if it leaves a `.bag`, the `.json` stays bad, with the camera's error.
+Any other way out of a clip, such as a bug in the recorder, leaves it bad too.
+
+Ctrl+C during a clip ends it as Stop would, saves it as good once the camera has finished the
+`.bag`, and then quits. A second Ctrl+C while the camera is closing (which can take seconds)
+leaves the clip bad, because the `.bag` may be unfinished. A power cut during the few seconds the
+camera takes to start leaves a `.json` with no `.bag`. `clip_storage upload` uploads it like any
+clip, and `extract_frames` never sees it, since it only reads `.bag` files: it is clutter, and
+can be deleted.
 
 **Marking a clip bad.** Between clips, the page shows "Mark #0042 bad" for the last clip. It sets
 `bad` to `true` in the clip's `.json` and deletes nothing, so a clip marked by mistake is not
@@ -435,7 +444,7 @@ Unlike the rest of the package, it imports `pyrealsense2` directly and has no te
 
 ## Tests
 
-179 tests in the files below, run with `python -m pytest` from the package folder. The training
+185 tests in the files below, run with `python -m pytest` from the package folder. The training
 pipeline's tests, `test_dataset.py`, `test_extract_frames.py` and the others named after its
 steps, are not listed here. All pass on the Mac and on the
 Jetson. None of them needs a camera
@@ -445,8 +454,8 @@ or a network.
 |---|---|---|
 | `test_frame_source.py` | 6 | Depth scaling, zero kept as unknown, `float32`, the `Frame` unpacks in the agreed order, iteration and `with` blocks |
 | `test_realsense_source.py` | 12 | `BagSource` end to end on a synthetic bag: every frame once (the buffer copy), depth in meters, zeros kept, the image is left IR, timestamps in seconds, recorded intrinsics, no IMU, missing file. Also the USB frame rate choice and the macOS IMU refusal. |
-| `test_process_source.py` | 10 | Frames and images cross the process boundary, `fps` is passed back, open errors and open timeouts end the child, the source is closed before the child exits, Ctrl+C does not kill the child early, a frozen child is killed and reported, a dying child is reported |
-| `test_record.py` | 66 | Clip numbers and names, the shared counter (never reused, a counter file that is not a number from 1 refused), a taken clip name getting `-2`, `--domain` and the folders, giving files, folders and the counter back under `sudo`, the details file and its fields, the details marked bad until the clip ends (and when the last write fails), `seconds` ending at the last frame, marking bad (by hand, after a camera error, refused while recording or after cleanup), preview and recording sessions, the preview video's frame count, status states, error handling, the camera loop following the button, and every web endpoint |
+| `test_process_source.py` | 11 | Frames and images cross the process boundary, `fps` is passed back, open errors, open timeouts and a Ctrl+C while opening end the child, the source is closed before the child exits, Ctrl+C does not kill the child early, a frozen child is killed and reported, a dying child is reported |
+| `test_record.py` | 71 | Clip numbers and names, the shared counter (never reused, a counter file that is not a number from 1 refused), a taken clip name getting `-2`, `--domain` and the folders, giving files, folders and the counter back under `sudo`, the details file and its fields, the details marked bad until the clip ends (and when the last write fails, after an unexpected error, or after a Ctrl+C while the camera closes), Ctrl+C mid-clip saving a good clip, a failed start that leaves a `.bag`, `seconds` ending at the last frame (after a camera error too), marking bad (by hand, after a camera error, refused while recording or after cleanup), preview and recording sessions, the preview video's frame count, status states, error handling, the camera loop following the button, and every web endpoint |
 | `test_run.py` | 9 | The depth summary ignores zeros, the summary line, frame counting and `--max-frames`, and replaying a synthetic bag through `main()` |
 | `test_clip_storage.py` | 60 | Clip grouping, still-being-written, copy and delete decisions, the rclone listing format, `upload`, `download`, `cleanup`, the command line, an unreadable clip, Ctrl+C, partial downloads and a login that expires mid-run, all with an in-memory rclone |
 | `test_clip_storage_rclone.py` | 4 | `upload`, `download` and `cleanup` with the real rclone between two local folders (skipped where rclone is missing) |

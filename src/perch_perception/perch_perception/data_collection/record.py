@@ -361,7 +361,8 @@ class Recorder:
         self._clock = clock
         self._domain = domain
         self._details = clean_details({})  # the page's fields, for the next clip
-        self._last_details = None  # the details of the last clip, as in its .json
+        self._last_details = None  # the details of the last clip, as they should be saved
+        self._last_bad = False  # whether its .json, as saved, says bad
         self._lock = threading.Lock()
         self._wanted = False  # what the button last asked for
         self._clip = None  # name of the clip being recorded, or None
@@ -415,6 +416,7 @@ class Recorder:
             details = dict(self._last_details, bad=bad)
             write_details(os.path.join(self._folder, clip + '.json'), details)
             self._last_details = details
+            self._last_bad = bad
 
     def quit(self):
         """Ask the camera loop to finish."""
@@ -439,7 +441,7 @@ class Recorder:
                 'clip': self._clip,
                 'seconds': round(seconds, 1),
                 'last_clip': self._last_clip,
-                'last_bad': self._last_details is not None and self._last_details['bad'],
+                'last_bad': self._last_bad,
                 'details': dict(self._details),
                 'error': self._error,
                 'folder': self._folder,
@@ -498,28 +500,37 @@ class Recorder:
         # Until the clip ends, its .json says bad, so a clip cut short by a pulled battery or a
         # killed process is never taken for a good one. It is written before the camera starts,
         # so every .bag has one.
-        on_disk = dict(details, bad=True, error='the recording did not finish')
+        unfinished = dict(details, bad=True, error='the recording did not finish')
         try:
-            write_details(details_path, on_disk)
+            write_details(details_path, unfinished)
         except OSError as error:
             self._report(error)
             return
         video = None
-        ended = None  # time.monotonic() when the last frame was taken
+        clip_started = last_frame = None  # time.monotonic() at the start and the last frame
+        finished = False  # True once the camera has closed after a normal end
+        quitting = None  # a Ctrl+C during the clip, raised again once the camera has closed
         try:
             # Leaving this with block stops the camera, and stopping the
             # camera is what makes librealsense finish the .bag.
             with self._open_source(bag_path) as source:
+                clip_started = last_frame = time.monotonic()
                 with self._lock:
                     self._clip = name
-                    self._clip_started = time.monotonic()
+                    self._clip_started = clip_started
                 video = PreviewVideo(video_path, source.fps)
-                for frame in source:
-                    self._publish(frame.image)
-                    video.write(frame.image)
-                    if self._should_leave(recording=True):
-                        break
-                ended = time.monotonic()  # before the camera stops, which can take seconds
+                try:
+                    for frame in source:
+                        self._publish(frame.image)
+                        video.write(frame.image)
+                        last_frame = time.monotonic()
+                        if self._should_leave(recording=True):
+                            break
+                except KeyboardInterrupt as interrupt:
+                    # Ctrl+C quits the recorder. The clip ends as Stop would end it, and the
+                    # interrupt is raised again below, once the camera has finished the .bag.
+                    quitting = interrupt
+            finished = True
         except (OSError, RuntimeError) as error:
             # A clip cut short may not replay to the end, so it is marked bad. The person
             # recording can unmark it if it turns out fine.
@@ -527,35 +538,47 @@ class Recorder:
             details['error'] = str(error)
             self._report(error)
         finally:
-            if ended is None:
-                ended = time.monotonic()
             if video is not None:
                 video.close()
-            with self._lock:
-                recorded = self._clip is not None
-                if recorded:
-                    details['seconds'] = round(ended - self._clip_started, 1)
+            recorded = clip_started is not None
+            bad_on_disk = True  # the unfinished .json, until it is replaced
             if recorded:
+                # seconds ends at the last frame, not after the camera's shutdown.
+                details['seconds'] = round(last_frame - clip_started, 1)
+                if not finished and not details['bad']:
+                    # Neither a normal end nor a camera error: a bug, or a second Ctrl+C while
+                    # the camera was closing, which can leave the .bag unfinished.
+                    details.update(bad=True, error='the recording did not finish')
                 try:
                     write_details(details_path, details)
-                    on_disk = details
+                    bad_on_disk = details['bad']
                 except OSError as error:
                     self._report(f'could not save the details of {name}, so it stays marked bad: '
                                  f'{error}')
-            elif not os.path.exists(bag_path):
+            elif os.path.exists(bag_path):
+                # The camera failed after creating the .bag. Its .json stays bad, now with the
+                # camera's error if there was one.
+                if 'error' in details:
+                    try:
+                        write_details(details_path, dict(unfinished, error=details['error']))
+                    except OSError:
+                        pass  # the .json written first still says bad
+            else:
                 # The camera never started and left no .bag: a .json alone is no clip.
                 os.remove(details_path)
-            # Otherwise the camera failed after creating the .bag, which keeps its .json, bad.
             with self._lock:
                 if recorded:
                     self._last_clip = name
-                    self._last_details = on_disk  # what the page shows is what is on disk
+                    self._last_details = details
+                    self._last_bad = bad_on_disk  # the page shows what the .json says
                 self._clip = None
                 # However the clip ended, go back to preview.
                 self._wanted = False
             for path in (self._folder, bag_path, video_path):
                 if os.path.exists(path):
                     hand_to_user(path)
+        if quitting is not None:
+            raise quitting
 
     def _publish(self, image):
         encoded, jpeg = cv2.imencode('.jpg', image)
