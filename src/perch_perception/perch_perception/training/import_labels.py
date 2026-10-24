@@ -211,7 +211,8 @@ def split_counts(dataset):
     splits = dataset.read_splits()
     for row in dataset.read_clips():
         if row.clip in splits:
-            counts[row.domain][splits[row.clip]] += 1
+            # setdefault: a domain mistyped in clips.csv by hand is counted, not a crash.
+            counts.setdefault(row.domain, dict.fromkeys(SPLITS, 0))[splits[row.clip]] += 1
     return counts
 
 

@@ -239,8 +239,8 @@ clip ends, for whatever reason, the recorder goes back to preview.
 ### What one clip produces
 
 Files are named by the clip's number and start time, for example `0042_2026-10-23T14-02-11`.
-The number is padded to 4 digits so clips sort by it, and colons are left out of the time so the
-name is valid on every file system. If the folder already has a clip by that name,
+The number is padded to 4 digits so clips sort by it, up to clip 9999, and colons are left out of
+the time so the name is valid on every file system. If the folder already has a clip by that name,
 `free_clip_name` adds `-2`, `-3` and so on, so an earlier `.bag` is never written over.
 
 **Clip numbers** come from one counter file, `~/vespr_recordings/next_clip_id`, next to the two
@@ -251,7 +251,9 @@ pressed, so a recording that fails to start leaves a gap, and a number is never 
 twice, even after `clip_storage cleanup` deletes its clip. That is why the count is kept in a
 file and not worked out from the folder. Without the file the count starts at 1. If the Jetson
 is reinstalled, write a number higher than every clip on the Drive into the file before
-recording; the start time in the name keeps names unique even if you forget. A file holding
+recording. If you forget, names can repeat ones already on the Drive (an offline Jetson's clock
+restarts at the same date), and `clip_storage upload` reports those clips as conflicts and copies
+none of their files. A file holding
 anything but a whole number from 1 stops each recording with an error on the page, and changes
 nothing.
 
@@ -259,7 +261,7 @@ nothing.
 |---|---|
 | `<name>.bag` | Raw 16-bit depth and the left IR image at the session's frame rate, written by librealsense, with per-frame timestamps and the camera's calibration. This is the data. About 12 MB per second at 848x480 and 10 fps. |
 | `<name>.mp4` | Every recorded IR frame as grayscale video, for watching only. It is H.264 (`avc1`), or MPEG-4 (`mp4v`) where OpenCV cannot encode H.264. It is lossy: never use it for training or measurement. |
-| `<name>.json` | The clip's details, below. Written when the camera starts recording and again when the clip ends. |
+| `<name>.json` | The clip's details, below. Written before the camera starts, marked bad, and written again when the clip ends. |
 
 The details file:
 
@@ -271,18 +273,28 @@ The details file:
 | `seconds` | How long the clip is |
 | `site`, `branch`, `light`, `notes` | What was in the page's fields when Record was pressed. Spaces at the ends are trimmed. |
 | `bad` | `true` if the clip was marked bad |
-| `error` | Only present when the camera failed during the clip: the error |
+| `error` | Why the clip is marked bad by itself: the camera's error, or `the recording did not finish` |
 
 The fields carry over from clip to clip, so they are typed once per branch. `extract_frames`
 uses `site` and `branch` to keep every clip of a branch in one split (see the training README),
 so type a new branch name for each branch.
 
+**Marked bad until it ends.** The `.json` is first written with `bad` set to `true` and `error`
+set to `the recording did not finish`, before the camera starts. Only when the clip ends normally
+is it written again, as not bad. So a clip cut short by a pulled battery or a killed recorder,
+which may not replay to the end, is never taken for a good one. If the camera fails during the
+clip, it stays bad with the camera's error. If that last write fails (a full disk), the page says
+so and shows the clip as bad, which is what the file says. If the camera fails to start and
+leaves no `.bag`, the `.json` is deleted, because a `.json` alone is no clip. Ctrl+C during a
+clip ends it normally.
+
 **Marking a clip bad.** Between clips, the page shows "Mark #0042 bad" for the last clip. It sets
 `bad` to `true` in the clip's `.json` and deletes nothing, so a clip marked by mistake is not
 lost: press the button again ("Unmark #0042 bad"), or edit the `.json` later. `extract_frames`
-skips clips marked bad. A clip that ends because the camera failed is marked bad by itself,
-because a clip cut short may not replay to the end. Only the last clip of the running recorder
-can be marked from the page; mark older clips by editing their `.json`. Mark a clip before it is
+skips clips marked bad. Only the last clip of the running recorder can be marked from the page,
+and only between clips; mark older clips by editing their `.json`. A clip whose `.bag` has gone
+from the Jetson, deleted by `clip_storage cleanup`, cannot be marked there: edit its `.json` on
+the Mac after downloading it, before running `extract_frames`. Mark a clip before it is
 uploaded: marking changes the `.json`'s size, so for a clip already on the Drive, `clip_storage
 upload` reports a conflict and leaves the Drive's old copy; replace that one by hand.
 
@@ -295,8 +307,9 @@ The recorder does **not** record the IMU, save camera details (emitter state, ex
 folders `clip_storage` uploads from; `--out` overrides it. They sit directly in the home folder,
 because macOS can sync Desktop and Documents to iCloud Drive and clips are hundreds of megabytes.
 Under `sudo` the folder is still the home folder of the person who ran `sudo` (from `SUDO_USER`).
-The folder is created if it is missing. Under `sudo` the folder and both files are handed back to
-that person (from `SUDO_UID` and `SUDO_GID`), so they don't end up owned by root.
+The folder is created if it is missing. Under `sudo` every folder the recorder creates, the
+counter and every clip file are handed back to that person (from `SUDO_UID` and `SUDO_GID`), so
+they don't end up owned by root.
 
 ### Recorder states
 
@@ -324,10 +337,11 @@ tunnel.
 | `GET /status` | JSON: `state`, `clip`, `seconds`, `last_clip`, `last_bad`, `details` (the fields kept for the next clip), `error`, `folder` |
 | `GET /stream` | The live view as MJPEG: one HTTP response that never ends, carrying one JPEG after another |
 | `POST /start` | Ask for a recording; replies with the status. A JSON body of fields, such as `{"site": "park", "branch": "7"}`, replaces the kept fields (a missing field becomes empty); no body keeps them. An unknown field, or one that is not text, gets `400` and starts nothing. |
-| `POST /stop` | Ask for the recording to end; replies with the status |
-| `POST /bad` | `{"bad": true}` or `{"bad": false}`: mark the last clip bad or not; replies with the status. `409` before any clip, `400` for any other body. |
+| `POST /stop` | Ask for the recording to end; replies with the status. Any body is ignored, so stopping always works. |
+| `POST /bad` | `{"bad": true}` or `{"bad": false}`: mark the last clip bad or not; replies with the status. `400` for any other body; `409` before any clip, while a clip is recording, or when the last clip's `.bag` is gone; `500` if the `.json` cannot be written. |
 
-Refusals reply with `{"error": "..."}`, and the page shows the message under the buttons.
+Refusals reply with `{"error": "..."}`, and the page shows the message under the buttons, or
+"The recorder did not answer" when no reply comes.
 
 The page asks for `/status` twice a second and says "The recorder is not responding" if it gets
 no answer.
@@ -421,8 +435,9 @@ Unlike the rest of the package, it imports `pyrealsense2` directly and has no te
 
 ## Tests
 
-157 tests outside `training/` (its README describes its own), run with `python -m pytest` from the
-package folder. All pass on the Mac and on the
+179 tests in the files below, run with `python -m pytest` from the package folder. The training
+pipeline's tests, `test_dataset.py`, `test_extract_frames.py` and the others named after its
+steps, are not listed here. All pass on the Mac and on the
 Jetson. None of them needs a camera
 or a network.
 
@@ -431,11 +446,11 @@ or a network.
 | `test_frame_source.py` | 6 | Depth scaling, zero kept as unknown, `float32`, the `Frame` unpacks in the agreed order, iteration and `with` blocks |
 | `test_realsense_source.py` | 12 | `BagSource` end to end on a synthetic bag: every frame once (the buffer copy), depth in meters, zeros kept, the image is left IR, timestamps in seconds, recorded intrinsics, no IMU, missing file. Also the USB frame rate choice and the macOS IMU refusal. |
 | `test_process_source.py` | 10 | Frames and images cross the process boundary, `fps` is passed back, open errors and open timeouts end the child, the source is closed before the child exits, Ctrl+C does not kill the child early, a frozen child is killed and reported, a dying child is reported |
-| `test_record.py` | 51 | Clip numbers and names, the shared counter (never reused, a broken counter file refused), a taken clip name getting `-2`, `--domain` and the folders, giving files back under `sudo`, the details file and its fields, marking bad (by hand and after a camera error), preview and recording sessions, the preview video's frame count, status states, error handling, the camera loop following the button, and every web endpoint |
+| `test_record.py` | 66 | Clip numbers and names, the shared counter (never reused, a counter file that is not a number from 1 refused), a taken clip name getting `-2`, `--domain` and the folders, giving files, folders and the counter back under `sudo`, the details file and its fields, the details marked bad until the clip ends (and when the last write fails), `seconds` ending at the last frame, marking bad (by hand, after a camera error, refused while recording or after cleanup), preview and recording sessions, the preview video's frame count, status states, error handling, the camera loop following the button, and every web endpoint |
 | `test_run.py` | 9 | The depth summary ignores zeros, the summary line, frame counting and `--max-frames`, and replaying a synthetic bag through `main()` |
 | `test_clip_storage.py` | 60 | Clip grouping, still-being-written, copy and delete decisions, the rclone listing format, `upload`, `download`, `cleanup`, the command line, an unreadable clip, Ctrl+C, partial downloads and a login that expires mid-run, all with an in-memory rclone |
 | `test_clip_storage_rclone.py` | 4 | `upload`, `download` and `cleanup` with the real rclone between two local folders (skipped where rclone is missing) |
-| `test_no_realsense_leak.py` | 5 | `data_collection.clip_storage`, `data_collection.record`, `frame_source`, `process_source` and `run` import without pulling in `pyrealsense2` (checked in a fresh interpreter) |
+| `test_no_realsense_leak.py` | 12 | `data_collection.clip_storage`, `data_collection.record`, `frame_source`, `process_source`, `run` and the seven `training` modules import without pulling in `pyrealsense2` (checked in a fresh interpreter) |
 
 Helpers:
 

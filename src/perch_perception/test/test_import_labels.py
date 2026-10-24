@@ -7,6 +7,7 @@ Exports are written as zips (or a folder) laid out the way the labeling tools wr
 
 import json
 import zipfile
+from dataclasses import replace
 
 import pytest
 
@@ -264,6 +265,17 @@ def test_the_clips_of_each_split_are_counted_per_domain(tmp_path, capsys):
     main([str(full_export(tmp_path / 'export.zip')), '--dataset', str(dataset.root)])
 
     assert 'indoor clips: 0 train, 1 val, 1 hold, 0 test' in capsys.readouterr().out
+
+
+def test_a_domain_misspelled_in_clips_csv_is_still_counted(tmp_path, capsys):
+    dataset = make_dataset(tmp_path / 'dataset')
+    clips = dataset.read_clips()
+    dataset.write_clips([replace(clips[0], domain='Indoor'), clips[1]])  # a hand edit
+
+    status = main([str(full_export(tmp_path / 'export.zip')), '--dataset', str(dataset.root)])
+
+    assert status == 0
+    assert 'Indoor clips: 0 train, 1 val' in capsys.readouterr().out
 
 
 def test_a_domain_with_no_train_clip_is_warned_about(tmp_path, capsys):

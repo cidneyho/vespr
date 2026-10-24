@@ -223,7 +223,8 @@ def test_a_val_clip_of_another_domain_does_not_count():
 @pytest.mark.parametrize('split', ['train', 'val', 'hold', 'test'])
 def test_a_clip_joins_the_split_its_branch_already_has(split):
     # Clips of one branch are near-copies, like frames of one clip, so they share a split. Here
-    # the domain has no val clip, so without the branch b would go to val.
+    # the domain has no val clip, so without the branch b would go to val: the val case is only
+    # there for completeness.
     clips = clip_rows(('a', 'indoor', 'lab/1'), ('b', 'indoor', 'lab/1'))
 
     assert assign_split('b', {'a': split}, clips) == split
@@ -298,6 +299,19 @@ def test_clips_no_run_has_used_can_be_held(tmp_path):
     write_run(dataset, 'r1', train=[CLIP], val=[])
 
     assert check_splits(dataset) is None
+
+
+def test_a_held_clip_is_leakage_when_a_run_used_another_clip_of_its_branch(tmp_path):
+    # The trained clip has no split row, as after its row was deleted by hand, so the check that
+    # a branch's clips share one split cannot see it.
+    dataset = make_dataset(tmp_path, {CLIP: ('outdoor', 'hold')},
+                           groups={CLIP: 'park/7', OTHER_CLIP: 'park/7'})
+    dataset.write_clips(dataset.read_clips() + [ClipRow(OTHER_CLIP, 'outdoor', 100, 'f' * 32,
+                                                        'park/7')])
+    write_run(dataset, 'r1', train=[OTHER_CLIP], val=[])
+
+    with pytest.raises(LeakageError, match=CLIP):
+        check_splits(dataset)
 
 
 def test_clips_of_one_branch_in_different_splits_are_an_error(tmp_path):

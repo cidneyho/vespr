@@ -36,8 +36,8 @@ A new clip joins the split its branch already has, whatever it is. A new branch,
 no branch, goes to `train` or `val` (about 80/20, by a hash of the branch, or of the clip's name
 when it has none), and each domain's first clip goes to `val`. Edit `splits.csv` by hand to mark
 clips `hold` or `test`, and change every clip of a branch together. Every command that reads
-`splits.csv` refuses to run if a clip marked `hold` or `test` has already been used by a training
-run, or if the clips of one branch have different splits.
+`splits.csv` refuses to run if a clip marked `hold` or `test`, or any clip of its branch, has
+already been used by a training run, or if the clips of one branch have different splits.
 
 ## What John runs, start to finish
 
@@ -91,7 +91,8 @@ Clips recorded before the recorder wrote a `.json` have no branch and are never 
 
 Run it again on the same folder whenever new clips arrive. A clip already extracted is skipped
 when its MD5 matches; one with the same name but different content is refused, because two
-recordings can share a name when the Jetson clock is wrong. Rename the file in that case.
+recordings can share a name if the recorder's counter file was lost and the Jetson clock was wrong.
+Rename the file in that case.
 
 `--hold CLIP` (repeat it for more clips) marks a new clip `hold` in `splits.csv` as it is
 extracted. Holding one clip of a branch is enough: the branch's other clips join `hold` when their
@@ -102,7 +103,9 @@ every other clip of its branch.
 
 If a `.bag` cannot be read to the end (for example an unindexed or truncated file), the command
 stops with an error naming the file. Clips before it stay extracted, and the failed clip has no
-rows, so the next run tries it again.
+rows, so the next run tries it again, and fails on it again. If the clip is beyond saving, set
+`"bad": true` in its `.json` (create the file, `{"bad": true}`, for a clip that has none), and
+the next run skips it.
 
 At the end, the frames not yet in a batch are zipped into `to_label/batch_<nnn>.zip`, at most 100
 per zip (`--batch-size`), with the PNGs at the top of the zip. Upload each zip to the labeling
@@ -140,7 +143,9 @@ The import is refused, changing nothing, if:
 - a label matches no frame in `manifest.csv`, or a frame that was never packed into a batch
 - a polygon is malformed: an odd number of coordinates, fewer than 3 points, a value outside 0
   to 1, or a class other than 0
-- a clip marked `hold` or `test` was already used by a training run
+- a clip marked `hold` or `test`, or another clip of its branch, was already used by a training
+  run
+- the clips of one branch have different splits in `splits.csv`
 
 It prints how many frames came back with no branch (`<empty> of <labels> frames came back with no
 branch`): a large number usually means the batch was not finished. Importing a batch again

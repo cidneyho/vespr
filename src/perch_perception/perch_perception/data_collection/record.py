@@ -60,6 +60,7 @@ PAGE = """<!doctype html>
   img.recording { border-color: #d22; }
   button { font-size: 1.5em; padding: 0.4em 1.5em; margin: 0.6em; }
   #status { font-size: 1.6em; }
+  #last { font-size: 1.3em; }
   label { margin: 0 0.5em; }
   input { font-size: 1em; width: 8em; }
   #notes { width: 16em; }
@@ -130,23 +131,29 @@ function show(status) {
   }
 }
 
-// Send a request with a JSON body. A refusal is shown until the next request.
+// Send a request, with a JSON body if one is given. A refusal is shown until the next request.
 function send(path, body) {
-  document.getElementById('refused').textContent = '';
-  fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'},
-               body: JSON.stringify(body)})
+  const refused = document.getElementById('refused');
+  refused.textContent = '';
+  const options = {method: 'POST'};
+  if (body !== undefined) {
+    options.headers = {'Content-Type': 'application/json'};
+    options.body = JSON.stringify(body);
+  }
+  fetch(path, options)
     .then(reply => reply.json().then(answer => {
       if (reply.ok) {
         show(answer);
       } else {
-        document.getElementById('refused').textContent = answer.error;
+        refused.textContent = answer.error;
       }
-    }));
+    }))
+    .catch(() => { refused.textContent = 'The recorder did not answer'; });
 }
 
 button.onclick = () => {
   if (state === 'recording') {
-    send('/stop', {});
+    send('/stop');
     return;
   }
   const details = {};
@@ -168,8 +175,8 @@ setInterval(
 """
 
 
-class NothingToMark(ValueError):
-    """Mark bad was pressed before this recorder recorded any clip."""
+class CannotMark(ValueError):
+    """The last clip cannot be marked now: there is none yet, a clip is recording, or it is gone."""
 
 
 def clip_name(number, now):
@@ -212,7 +219,7 @@ def write_file_atomically(path, text):
     swaps it in for the old file in a single operation. The drone's battery can be pulled at
     any moment, which is why the flush matters.
     """
-    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    make_folders(os.path.dirname(path) or '.')
     temporary = path + '.tmp'
     with open(temporary, 'w') as file:
         file.write(text)
@@ -268,9 +275,10 @@ def write_details(path, details):
 def free_clip_name(folder, name):
     """Return name, or name-2, name-3 and so on if folder already has a clip by that name.
 
-    Clips are named by the clock. Without internet the Jetson cannot set its
-    clock, so a new clip can get the name of an earlier one, and librealsense
-    would write over the earlier .bag.
+    The clip number makes names unique, but if the counter file is lost, as when
+    the Jetson is reinstalled, numbers start again, and without internet the
+    clock can repeat a time too. librealsense would then write over the earlier
+    .bag.
     """
     taken = {os.path.splitext(entry)[0] for entry in os.listdir(folder)}
     candidate = name
@@ -279,6 +287,17 @@ def free_clip_name(folder, name):
         number += 1
         candidate = f'{name}-{number}'
     return candidate
+
+
+def make_folders(path):
+    """Create a folder and any missing folders above it, each handed back under sudo."""
+    missing = []
+    while path and not os.path.isdir(path):
+        missing.append(path)
+        path = os.path.dirname(path)
+    for folder in reversed(missing):  # the top one first
+        os.makedirs(folder, exist_ok=True)
+        hand_to_user(folder)
 
 
 def hand_to_user(path):
@@ -376,16 +395,25 @@ class Recorder:
     def mark_last_clip_bad(self, bad):
         """Mark the last clip bad (True) or not (False) in its .json. Nothing is deleted.
 
-        extract_frames skips clips marked bad. Raises NothingToMark if this recorder has not
-        recorded a clip yet, and ValueError if bad is not True or False.
+        extract_frames skips clips marked bad. Raises ValueError if bad is not True or False, and
+        CannotMark if this recorder has not recorded a clip yet, if a clip is being recorded (the
+        page only offers the button between clips), or if the last clip's .bag is gone, as after
+        clip_storage cleanup: a .json on its own would be a clip of its own on the next upload.
         """
         if not isinstance(bad, bool):
             raise ValueError('bad must be true or false')
         with self._lock:
             if self._last_details is None:
-                raise NothingToMark('there is no clip to mark yet')
+                raise CannotMark('there is no clip to mark yet')
+            if self._clip is not None or self._wanted:
+                raise CannotMark('a clip can only be marked between clips')
+            clip = self._last_details['clip']
+            if not os.path.exists(os.path.join(self._folder, clip + '.bag')):
+                raise CannotMark(
+                    f'{clip}.bag is no longer in {self._folder}, probably cleaned up after its '
+                    'upload. Mark it in its .json on the Mac, after downloading it.')
             details = dict(self._last_details, bad=bad)
-            write_details(os.path.join(self._folder, details['clip'] + '.json'), details)
+            write_details(os.path.join(self._folder, clip + '.json'), details)
             self._last_details = details
 
     def quit(self):
@@ -452,7 +480,7 @@ class Recorder:
     def _record_clip(self):
         started = self._clock()
         try:
-            os.makedirs(self._folder, exist_ok=True)
+            make_folders(self._folder)
             # The number is taken before the camera opens. If the camera then fails, the number
             # is simply skipped: a gap in the numbers is harmless, a number used twice is not.
             number = take_clip_number(self._counter)
@@ -467,7 +495,17 @@ class Recorder:
             details = {'clip': name, 'number': number, 'domain': self._domain,
                        'started': started.isoformat(timespec='seconds'), 'seconds': 0.0,
                        **self._details, 'bad': False}
+        # Until the clip ends, its .json says bad, so a clip cut short by a pulled battery or a
+        # killed process is never taken for a good one. It is written before the camera starts,
+        # so every .bag has one.
+        on_disk = dict(details, bad=True, error='the recording did not finish')
+        try:
+            write_details(details_path, on_disk)
+        except OSError as error:
+            self._report(error)
+            return
         video = None
+        ended = None  # time.monotonic() when the last frame was taken
         try:
             # Leaving this with block stops the camera, and stopping the
             # camera is what makes librealsense finish the .bag.
@@ -475,14 +513,13 @@ class Recorder:
                 with self._lock:
                     self._clip = name
                     self._clip_started = time.monotonic()
-                # Written as soon as the .bag exists, so a clip never lacks its details.
-                write_details(details_path, details)
                 video = PreviewVideo(video_path, source.fps)
                 for frame in source:
                     self._publish(frame.image)
                     video.write(frame.image)
                     if self._should_leave(recording=True):
                         break
+                ended = time.monotonic()  # before the camera stops, which can take seconds
         except (OSError, RuntimeError) as error:
             # A clip cut short may not replay to the end, so it is marked bad. The person
             # recording can unmark it if it turns out fine.
@@ -490,21 +527,29 @@ class Recorder:
             details['error'] = str(error)
             self._report(error)
         finally:
+            if ended is None:
+                ended = time.monotonic()
             if video is not None:
                 video.close()
             with self._lock:
                 recorded = self._clip is not None
                 if recorded:
-                    details['seconds'] = round(time.monotonic() - self._clip_started, 1)
+                    details['seconds'] = round(ended - self._clip_started, 1)
             if recorded:
                 try:
                     write_details(details_path, details)
+                    on_disk = details
                 except OSError as error:
-                    self._report(error)
+                    self._report(f'could not save the details of {name}, so it stays marked bad: '
+                                 f'{error}')
+            elif not os.path.exists(bag_path):
+                # The camera never started and left no .bag: a .json alone is no clip.
+                os.remove(details_path)
+            # Otherwise the camera failed after creating the .bag, which keeps its .json, bad.
             with self._lock:
                 if recorded:
                     self._last_clip = name
-                    self._last_details = details
+                    self._last_details = on_disk  # what the page shows is what is on disk
                 self._clip = None
                 # However the clip ended, go back to preview.
                 self._wanted = False
@@ -564,23 +609,28 @@ def make_server(recorder, port):
                 self.send_error(404)
 
         def do_POST(self):
-            if self.path not in ('/start', '/stop', '/bad'):
+            if self.path == '/stop':
+                recorder.stop()  # stopping must always work, so any body is ignored
+                self._send_status()
+                return
+            if self.path not in ('/start', '/bad'):
                 self.send_error(404)
                 return
             try:
                 body = self._read_json()
                 if self.path == '/start':
                     recorder.start(body)  # no body keeps the fields of the clip before
-                elif self.path == '/stop':
-                    recorder.stop()
                 else:
-                    if not isinstance(body, dict) or not isinstance(body.get('bad'), bool):
+                    if not isinstance(body, dict) or set(body) != {'bad'} or not isinstance(
+                            body['bad'], bool):
                         raise ValueError('send {"bad": true} or {"bad": false}')
                     recorder.mark_last_clip_bad(body['bad'])
-            except NothingToMark as error:
+            except CannotMark as error:
                 self._send_error(409, error)  # 409 Conflict: fine, but not now
             except ValueError as error:
                 self._send_error(400, error)  # 400 Bad Request; bad JSON is a ValueError too
+            except OSError as error:
+                self._send_error(500, f'could not save the mark: {error}')
             else:
                 self._send_status()
 
@@ -667,8 +717,8 @@ def main(argv=None):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f'open http://localhost:{args.port} in your browser')
     print(f'clips are saved to {args.out}, numbered by {counter_path()}')
-    # Clips are named by this clock. A Jetson without internet may have the
-    # wrong time, so show it before anything is recorded.
+    # Clip names and start times come from this clock. A Jetson without internet
+    # may have the wrong time, so show it before anything is recorded.
     print(f'this computer\'s clock reads {datetime.now():%Y-%m-%d %H:%M}; '
           'clips are named by it, so check it is right')
     print('press Ctrl+C here to quit')

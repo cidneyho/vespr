@@ -211,8 +211,7 @@ def extract_folder(dataset, folder, domain, every=10, hold=(), batch_size=100, o
     new_names = [clip for clip, _, _ in new_clips]
     for clip in hold:
         if clip in bad or clip in bad_extracted:
-            raise DatasetError(f'--hold names clip {clip}, but it is marked bad in its .json, '
-                               'so it is not extracted')
+            raise DatasetError(f'--hold names clip {clip}, but it is marked bad in its .json')
         if clip in skipped:
             raise DatasetError(
                 f'clip {clip} was already extracted, so --hold cannot mark it. '

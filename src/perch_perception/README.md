@@ -151,12 +151,21 @@ recording and "Last clip: #0042" after. The count is kept on the Jetson in
 `.json` and carry over to the next clip, so type them once per branch and change them when you
 move on. Give every branch its own name within a site (`7`, `8`, `big oak`...): the training
 pipeline keeps every clip of a branch in the same split, so clips with the same site and branch
-count as one branch. Indoors, with one rig branch, name each setup (`rig-pos1`, `rig-pos2`),
-or every indoor clip ends up in one split.
+count as one branch.
+
+**Indoors, with one rig branch,** every indoor clip shows the same branch, so under one name they
+all land in one split and the model has no indoor clip to learn from, or none to be scored on.
+The way out is to name each setup (`rig-pos1`, `rig-pos2`...) and make each setup really
+different: the branch in another place or at another height, another background, other
+lighting, another day. Then know what the indoor scores mean: how well the model handles a new
+setup of a branch it has already seen, not a new branch. For the indoor demo, which perches on
+that same branch, that is the question that matters, but it says nothing about other branches.
+Several real indoor branches, if you can get them, give a fairer indoor score.
 
 **A take went wrong?** Press "Mark #0042 bad" before the next Record. Nothing is deleted: the clip
-still uploads, and the training pipeline skips it. Press it again to unmark. A clip the camera
-cut short is marked bad by itself.
+still uploads, and the training pipeline skips it. Press it again to unmark. A clip that does not
+end normally stays marked bad by itself: the camera failing, the recorder being killed or the
+battery being pulled.
 
 The start time comes from the Jetson's clock, and without internet the Jetson cannot set it.
 Until it reaches the internet, its clock starts at the date its system image was built (June 5,

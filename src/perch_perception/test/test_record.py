@@ -45,7 +45,7 @@ class ScriptedSource(ListSource):
 
 
 class FakeCamera:
-    """Stands in for the function that opens the camera."""
+    """Stands in for the function that opens the camera. Recording creates an empty .bag."""
 
     def __init__(self, frame_count=5, before_frame=None, callback=None):
         self.frame_count = frame_count
@@ -56,6 +56,8 @@ class FakeCamera:
 
     def __call__(self, record_to):
         self.opened_with.append(record_to)
+        if record_to is not None:
+            open(record_to, 'wb').close()  # librealsense creates the .bag as the camera starts
         frames = [make_frame(float(i), shape=SHAPE) for i in range(self.frame_count)]
         source = ScriptedSource(frames, self.before_frame, self.callback)
         self.sources.append(source)
@@ -115,13 +117,14 @@ def test_the_counter_carries_on_from_the_number_in_its_file(tmp_path):
     assert record.take_clip_number(str(counter)) == 120
 
 
-def test_a_counter_file_that_is_not_a_number_is_refused(tmp_path):
+@pytest.mark.parametrize('text', ['twelve', '0', '-3', '1.5', ''])
+def test_a_counter_file_that_is_not_a_number_from_1_is_refused(tmp_path, text):
     counter = tmp_path / 'next_clip_id'
-    counter.write_text('twelve')
+    counter.write_text(text)
 
     with pytest.raises(RuntimeError, match='next_clip_id'):
         record.take_clip_number(str(counter))
-    assert counter.read_text() == 'twelve'
+    assert counter.read_text() == text
 
 
 def test_the_counter_sits_next_to_the_domain_folders(monkeypatch):
@@ -179,6 +182,53 @@ def test_a_recording_writes_its_details_next_to_the_bag(tmp_path):
     assert seconds >= 0
 
 
+def test_while_recording_the_details_say_bad_until_the_clip_ends(tmp_path):
+    # If the battery is pulled mid-clip, the .json on disk is what is left: it must say bad.
+    seen = []
+    camera = FakeCamera(before_frame=2, callback=lambda: seen.append(read_details(tmp_path)))
+
+    record_one_clip(make_recorder(camera, tmp_path))
+
+    assert seen[0]['bad'] is True
+    assert seen[0]['error'] == 'the recording did not finish'
+    assert read_details(tmp_path)['bad'] is False
+    assert 'error' not in read_details(tmp_path)
+
+
+def test_a_failed_last_details_write_leaves_the_clip_bad_and_says_so(tmp_path, monkeypatch):
+    real_write = record.write_details
+    writes = []
+
+    def write_then_fail(path, details):
+        writes.append(path)
+        if len(writes) > 1:
+            raise OSError(28, 'No space left on device')
+        real_write(path, details)
+
+    monkeypatch.setattr(record, 'write_details', write_then_fail)
+    recorder = make_recorder(FakeCamera(), tmp_path)
+
+    record_one_clip(recorder)
+
+    assert read_details(tmp_path)['bad'] is True
+    assert recorder.status()['last_bad'] is True
+    assert 'No space left' in recorder.status()['error']
+
+
+def test_seconds_counts_to_the_last_frame_not_to_the_end_of_the_camera_shutdown(tmp_path):
+    class SlowToClose(ScriptedSource):
+        def close(self):
+            time.sleep(0.5)
+            super().close()
+
+    def camera(record_to):
+        return SlowToClose([make_frame(0.0, shape=SHAPE)] * 3)
+
+    record_one_clip(make_recorder(camera, tmp_path))
+
+    assert read_details(tmp_path)['seconds'] < 0.4
+
+
 def test_the_details_given_with_start_are_saved_with_the_clip(tmp_path):
     recorder = make_recorder(FakeCamera(), tmp_path)
 
@@ -214,6 +264,16 @@ def test_a_detail_that_is_not_text_is_refused(tmp_path):
 
     with pytest.raises(ValueError, match='branch'):
         recorder.start({'branch': 7})
+
+
+def test_a_bag_left_by_a_camera_that_failed_to_start_keeps_its_details_marked_bad(tmp_path):
+    def camera_that_fails_after_creating_the_bag(record_to):
+        open(record_to, 'wb').close()
+        raise RuntimeError('the camera stopped while starting')
+
+    record_one_clip(make_recorder(camera_that_fails_after_creating_the_bag, tmp_path))
+
+    assert read_details(tmp_path)['bad'] is True
 
 
 def test_no_details_file_is_written_when_the_camera_fails_to_open(tmp_path):
@@ -256,8 +316,57 @@ def test_the_last_clip_can_be_marked_bad_and_unmarked(tmp_path):
 def test_marking_bad_before_any_clip_is_refused(tmp_path):
     recorder = make_recorder(FakeCamera(), tmp_path)
 
-    with pytest.raises(ValueError, match='no clip'):
+    with pytest.raises(record.CannotMark, match='no clip'):
         recorder.mark_last_clip_bad(True)
+
+
+def test_marking_bad_while_a_clip_is_recording_is_refused(tmp_path):
+    refusals = []
+    camera = FakeCamera(before_frame=2, callback=lambda: None)  # a first clip, to have one
+    recorder = make_recorder(camera, tmp_path)
+    record_one_clip(recorder)
+
+    def try_to_mark():
+        with pytest.raises(record.CannotMark, match='between clips') as error:
+            recorder.mark_last_clip_bad(True)
+        refusals.append(error)
+
+    camera.callback = try_to_mark
+    record_one_clip(recorder)
+
+    assert len(refusals) == 1
+    assert read_details(tmp_path)['bad'] is False
+
+
+def test_marking_a_clip_that_was_already_cleaned_up_is_refused(tmp_path):
+    # cleanup deletes uploaded clips; a lone .json would conflict with the Drive on every upload.
+    def camera(record_to):
+        if record_to is not None:
+            open(record_to, 'wb').close()
+        return ScriptedSource([make_frame(0.0, shape=SHAPE)])
+
+    recorder = make_recorder(camera, tmp_path)
+    record_one_clip(recorder)
+    for path in tmp_path.glob(CLIP + '.*'):
+        path.unlink()
+
+    with pytest.raises(record.CannotMark, match='no longer'):
+        recorder.mark_last_clip_bad(True)
+    assert not (tmp_path / (CLIP + '.json')).exists()
+
+
+def test_under_sudo_the_details_and_the_counter_are_handed_back(tmp_path, monkeypatch):
+    handed = []
+    monkeypatch.setattr(record.os, 'chown', lambda path, uid, gid: handed.append(str(path)))
+    monkeypatch.setenv('SUDO_UID', '501')
+    monkeypatch.setenv('SUDO_GID', '20')
+    counter = tmp_path / 'recordings' / 'next_clip_id'
+
+    record_one_clip(make_recorder(FakeCamera(), tmp_path / 'recordings' / 'outdoor', counter))
+
+    assert str(counter) in handed
+    assert str(counter.parent) in handed  # the folder the counter made
+    assert str(tmp_path / 'recordings' / 'outdoor' / (CLIP + '.json')) in handed
 
 
 def test_default_folder_is_in_the_home_folder_outside_icloud(monkeypatch):
@@ -542,11 +651,34 @@ def test_posting_bad_before_any_clip_is_refused(served):
     assert post(base + '/bad', {'bad': True}) == 409
 
 
-def test_posting_bad_without_true_or_false_is_refused(served):
+@pytest.mark.parametrize('body', [{'bad': 'yes'}, {'bad': True, 'clip': '0007'}, [True]])
+def test_posting_bad_with_any_other_body_is_refused(served, body):
     recorder, base = served
     record_one_clip(recorder)
 
-    assert post(base + '/bad', {'bad': 'yes'}) == 400
+    assert post(base + '/bad', body) == 400
+
+
+def test_a_bad_mark_that_cannot_be_written_gets_an_error_reply(served, monkeypatch):
+    recorder, base = served
+    record_one_clip(recorder)
+
+    def fail(path, details):
+        raise OSError(28, 'No space left on device')
+
+    monkeypatch.setattr(record, 'write_details', fail)
+
+    assert post(base + '/bad', {'bad': True}) == 500
+    assert recorder.status()['last_bad'] is False
+
+
+def test_posting_stop_ignores_its_body(served):
+    recorder, base = served
+    recorder.start()
+    request = urllib.request.Request(base + '/stop', data=b'{oops', method='POST')
+
+    assert urllib.request.urlopen(request, timeout=5).status == 200
+    assert recorder.status()['state'] == 'preview'
 
 
 def test_the_page_has_the_detail_fields_and_the_bad_button(served):

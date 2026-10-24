@@ -51,7 +51,7 @@ class FrameRow:
     """One extracted frame, one row of manifest.csv."""
 
     frame_id: str  # <clip>_<frame_index>, see frame_id()
-    clip: str  # the clip's name, its recording start time
+    clip: str  # the clip's name, such as 0042_2026-10-23T14-02-11
     domain: str  # 'indoor' or 'outdoor'
     frame_index: int  # position of the frame in its clip, counting from 0
     timestamp: float  # seconds
@@ -329,23 +329,31 @@ def used_clips(dataset):
 
 
 def check_splits(dataset):
-    """Raise LeakageError if a clip marked hold or test has already been used by a run.
+    """Raise LeakageError if a clip marked hold or test, or its branch, was used by a run.
 
     This is the leakage guard. Once a run has trained or tuned on a clip, scoring that clip
     later would report an optimistic, invalid result, so it can never be held out again. The
-    same goes for a branch: it raises DatasetError if the clips of one branch have different
-    splits, because training on one of them and scoring another is the same leak.
+    same goes for a branch, whose clips are near-copies: a held clip is leaked if a run used
+    any clip of its branch, and DatasetError is raised if the clips of one branch have
+    different splits.
     """
     splits = dataset.read_splits()
-    leaked = sorted(clip for clip in used_clips(dataset)
-                    if splits.get(clip) in HELD_OUT_SPLITS)
+    clips = dataset.read_clips()
+    used = used_clips(dataset)
+    # A run that used one clip of a branch has seen the whole branch. A clip without a branch is
+    # a group of one, so for it this is the clip itself.
+    used_groups = {split_group(row) for row in clips if row.clip in used}
+    leaked = sorted(row.clip for row in clips
+                    if splits.get(row.clip) in HELD_OUT_SPLITS
+                    and (row.clip in used or split_group(row) in used_groups))
     if leaked:
         raise LeakageError(
             'these clips are marked hold or test in splits.csv, but a training run already used '
-            f'them, so they can no longer be held out: {", ".join(leaked)}')
+            'them, or another clip of their branch, so they can no longer be held out: '
+            f'{", ".join(leaked)}')
 
     by_group = {}  # {group: {clip: split}} for the clips that have a split
-    for row in dataset.read_clips():
+    for row in clips:
         if row.clip in splits:
             by_group.setdefault(split_group(row), {})[row.clip] = splits[row.clip]
     for group, members in sorted(by_group.items()):
