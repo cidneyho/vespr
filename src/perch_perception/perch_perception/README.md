@@ -291,7 +291,8 @@ full details. If the camera fails to start and leaves no `.bag`, the `.json` is 
 Any other way out of a clip, such as a bug in the recorder, leaves it bad too.
 
 Ctrl+C during a clip ends it as Stop would, saves it as good once the camera has finished the
-`.bag`, and then quits. A second Ctrl+C while the camera is closing (which can take seconds)
+`.bag`, and then quits. If the camera then fails to close, the clip stays bad instead: an error
+can mark a good clip bad, never a bad clip good. A second Ctrl+C while the camera is closing (which can take seconds)
 leaves the clip bad, because the `.bag` may be unfinished. A power cut during the few seconds the
 camera takes to start leaves a `.json` with no `.bag`. `clip_storage upload` uploads it like any
 clip, and `extract_frames` never sees it, since it only reads `.bag` files: it is clutter, and
