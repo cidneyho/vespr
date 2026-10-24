@@ -33,6 +33,7 @@ def find_clip(folder, name):
     after the recorder's counter file is lost.
     """
     folder = Path(folder)
+    name = name.removesuffix('.bag')
     if (folder / f'{name}.bag').exists():
         return folder / f'{name}.bag'
     if re.fullmatch(r'[0-9]+', name):
@@ -79,10 +80,41 @@ def set_keep(bag_path, start, end):
                 and start >= seconds:
             raise TrimError(f'{path.stem} is {seconds:g} s long, so a range starting at '
                             f'{start:g} s keeps nothing')
-        details['keep'] = [start, end]
+        details['keep'] = [start + 0.0, end + 0.0]  # + 0.0 turns -0.0 into 0.0
         details['bad'] = False
     write_details(str(path), details)
     return details
+
+
+def preview_seconds(bag_path):
+    """Return how long the clip's .mp4 plays, in seconds, or None if it cannot be read."""
+    import cv2  # imported here, so the rest of this module does not need it
+
+    capture = cv2.VideoCapture(str(Path(bag_path).with_suffix('.mp4')))
+    try:
+        frames = capture.get(cv2.CAP_PROP_FRAME_COUNT)
+        fps = capture.get(cv2.CAP_PROP_FPS)
+    finally:
+        capture.release()
+    return frames / fps if frames > 0 and fps > 0 else None
+
+
+def warnings_for(bag_path, details):
+    """Return what to warn about before trusting a range kept from this clip."""
+    warnings = []
+    if details.get('error') == 'the recording did not finish':
+        warnings.append(
+            'this clip did not finish recording, so its .bag may not open at all: librealsense '
+            'cannot open a truncated .bag, and trimming does not change that. If extract_frames '
+            'fails on it, mark it bad again.')
+    seconds = details.get('seconds')
+    played = preview_seconds(bag_path)
+    if isinstance(seconds, (int, float)) and played is not None and seconds - played > 0.5:
+        warnings.append(
+            f'the .mp4 plays for {played:g} s, but the clip is {seconds:g} s long: frames were '
+            'dropped while recording, so .mp4 times run behind the clip\'s, more so the later in '
+            'the clip. Leave a wider margin, especially late in the clip.')
+    return warnings
 
 
 def parse_args(argv=None):
@@ -117,6 +149,8 @@ def main(argv=None):
             seconds = details.get('seconds')
             of = f' of {seconds:g} s' if isinstance(seconds, (int, float)) else ''
             print(f'{bag.stem}: keeping {start:g} to {end:g} s{of}; it is no longer marked bad')
+            for warning in warnings_for(bag, details):
+                print(f'warning: {warning}')
     except TrimError as error:
         print(f'error: {error}', file=sys.stderr)
         return 1

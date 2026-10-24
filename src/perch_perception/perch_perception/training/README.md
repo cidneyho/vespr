@@ -86,10 +86,11 @@ The recorder saves a `.json` of details next to each `.bag`, and extraction read
 - A clip whose `.json` says the other domain is refused, so an indoor clip in the outdoor folder
   is caught.
 - A clip trimmed with `data_collection.trim` has `"keep": [start, end]` in its `.json`. Only its
-  frames in that range, in seconds from the clip's first frame, are extracted, and reading stops
-  after the range, so a broken end of the `.bag` is never read. The range goes into `clips.csv`
+  frames in that range, ends included, in seconds from the clip's first frame, are extracted,
+  and reading stops after the range. The range goes into `clips.csv`
   (`keep`, such as `0-12.5`). A range changed after the clip was extracted brings a warning: its
-  frames in the dataset are still those of the old range.
+  frames in the dataset are still those of the old range. A range so short that every Nth frame
+  (`--every`) misses it gives no frames, with a warning.
 - A `.json` that is not valid JSON stops the command with an error naming the file.
 
 Clips recorded before the recorder wrote a `.json` have no branch and are never skipped.
@@ -108,9 +109,8 @@ every other clip of its branch.
 
 If a `.bag` cannot be read to the end (for example an unindexed or truncated file), the command
 stops with an error naming the file. Clips before it stay extracted, and the failed clip has no
-rows, so the next run tries it again, and fails on it again. If its start is good, keep that part
-with `data_collection.trim`, ending the range before the break. If the clip is beyond saving, set
-`"bad": true` in its `.json` (create the file, `{"bad": true}`, for a clip that has none), and
+rows, so the next run tries it again, and fails on it again. Trimming does not help: librealsense
+cannot open a truncated `.bag` at all, whatever range is kept. Set `"bad": true` in its `.json` (create the file, `{"bad": true}`, for a clip that has none), and
 the next run skips it.
 
 At the end, the frames not yet in a batch are zipped into `to_label/batch_<nnn>.zip`, at most 100

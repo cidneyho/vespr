@@ -413,8 +413,17 @@ class Recorder:
                 raise CannotMark(
                     f'{clip}.bag is no longer in {self._folder}, probably cleaned up after its '
                     'upload. Mark it in its .json on the Mac, after downloading it.')
+            path = os.path.join(self._folder, clip + '.json')
             details = dict(self._last_details, bad=bad)
-            write_details(os.path.join(self._folder, clip + '.json'), details)
+            # A range trim saved in the .json since is kept, not written over from memory.
+            try:
+                with open(path) as file:
+                    keep = json.load(file).get('keep')
+            except (OSError, ValueError, AttributeError):
+                keep = None
+            if keep is not None:
+                details['keep'] = keep
+            write_details(path, details)
             self._last_details = details
             self._last_bad = bad
 

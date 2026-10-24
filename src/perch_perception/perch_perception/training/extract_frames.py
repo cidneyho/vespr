@@ -52,6 +52,7 @@ class ExtractSummary:
     bad: list  # clip names marked bad in their .json, so not extracted
     bad_extracted: list  # clip names marked bad, but extracted before they were marked
     keep_changed: list  # clip names whose range to keep changed after they were extracted
+    no_frames: list  # clip names whose range to keep gave no frame at all
 
 
 def open_bag_source(path):
@@ -122,9 +123,9 @@ def extract_clip(dataset, frames, clip, domain, every, keep=None):
     """Save every Nth frame of a clip as a PNG and return their FrameRows, not yet batched.
 
     Frames are counted from 0 in the order they arrive, and a frame is kept when its index is a
-    multiple of every, so the first frame is always kept. keep, [start, end] in seconds from the
-    clip's first frame, keeps only the frames in that range: reading stops after its end, so a
-    broken end of the .bag is never read. Nothing is written to the CSV files.
+    multiple of every, so the clip's first frame is kept unless a range leaves it out. keep,
+    [start, end] in seconds from the clip's first frame, keeps only the frames in that range,
+    ends included, and reading stops after its end. Nothing is written to the CSV files.
     """
     dataset.images_dir.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -134,9 +135,10 @@ def extract_clip(dataset, frames, clip, domain, every, keep=None):
             first_timestamp = frame.timestamp
         if keep is not None:
             since_start = frame.timestamp - first_timestamp
-            if since_start > keep[1]:
+            # A microsecond of slack, because 5.1 - 5.0 is 0.0999... in floating point.
+            if since_start > keep[1] + 1e-6:
                 break
-            if since_start < keep[0]:
+            if since_start < keep[0] - 1e-6:
                 continue
         # Counted from the clip's first frame, not the range's, so frame ids stay the same
         # whatever range is kept.
@@ -221,6 +223,7 @@ def extract_folder(dataset, folder, domain, every=10, hold=(), batch_size=100, o
     bad = []
     bad_extracted = []
     keep_changed = []
+    no_frames = []
     for path in sorted(folder.glob('*.bag')):
         clip = path.stem
         details = read_details(path)
@@ -283,6 +286,8 @@ def extract_folder(dataset, folder, domain, every=10, hold=(), batch_size=100, o
         # then its hold split, because splits.csv may only name clips that are in clips.csv.
         # Any frames of this clip already in the manifest are dropped first: a crash between
         # writing the frames and the clip leaves them behind, and a retry must not add them twice.
+        if clip in keeps and not rows:
+            no_frames.append(clip)
         kept = [row for row in dataset.read_frames() if row.clip != clip]
         dataset.write_frames(kept + rows)
         dataset.write_clips(dataset.read_clips() + [clip_row])
@@ -294,7 +299,7 @@ def extract_folder(dataset, folder, domain, every=10, hold=(), batch_size=100, o
 
     batches = pack_batches(dataset, batch_size)
     return ExtractSummary(new_names, skipped, frame_count, batches, bad, bad_extracted,
-                          keep_changed)
+                          keep_changed, no_frames)
 
 
 def parse_args(argv=None):
@@ -313,12 +318,13 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
-def main(argv=None):
+def main(argv=None, open_bag=None):
+    """Run the command. open_bag stands in for opening a real .bag, as in extract_folder."""
     args = parse_args(argv)
     dataset = Dataset(args.dataset)
     try:
         summary = extract_folder(dataset, args.folder, args.domain, args.every, args.hold,
-                                 args.batch_size)
+                                 args.batch_size, open_bag)
     except DatasetError as error:
         print(f'error: {error}', file=sys.stderr)
         return 1
@@ -331,6 +337,9 @@ def main(argv=None):
     for clip in summary.bad_extracted:
         print(f'warning: {clip} is marked bad, but it was extracted before it was marked, so its '
               'frames are still in the dataset. Nothing removes them by itself.')
+    for clip in summary.no_frames:
+        print(f'warning: {clip} gave no frames: its range to keep is shorter than one frame in '
+              f'{args.every}. Widen the range with trim, or lower --every.')
     for clip in summary.keep_changed:
         print(f'warning: the range to keep of {clip} changed after it was extracted, so its '
               'frames in the dataset are still those of the old range. Nothing changes them by '

@@ -272,7 +272,7 @@ The details file:
 | `clip`, `number` | The clip's name and number |
 | `domain` | `indoor` or `outdoor`, from `--domain` |
 | `started` | The start time from the computer's clock, for example `2026-10-23T14:02:11`. Wrong if the Jetson's clock was not set. |
-| `seconds` | How long the clip is, from its first frame to its last; `null` until the clip ends, so it stays `null` for a clip that did not finish |
+| `seconds` | How long the clip is, from its first frame to its last. `null` until the clip ends, and so it stays `null` only when the recorder never got to the end, as after a pulled battery or a killed recorder. |
 | `site`, `branch`, `light`, `notes` | What was in the page's fields when Record was pressed. Spaces at the ends are trimmed. |
 | `bad` | `true` if the clip was marked bad |
 | `error` | Why the clip was marked bad by itself: the camera's error, or `the recording did not finish`. Kept if the clip is unmarked later. |
@@ -418,14 +418,28 @@ Mac after downloading the clip, and before `extract_frames`. Find the times by p
   another folder. A clip with no `.json`, recorded before the recorder wrote one, gets one.
 
 Nothing is cut out of the `.bag`, which stays exactly as it was recorded. `extract_frames` takes
-only the frames in the range, timed from the clip's first frame, and stops reading after its end,
-so a `.bag` whose end is broken, as after a pulled battery, can be saved by ending the range
-before the break.
+only the frames in the range, ends included, timed from the clip's first frame, and stops reading
+after its end.
 
-The times are close, not exact: the `.mp4` player counts frames, while the range is matched to
-the camera's timestamps, and the two drift apart a little if frames were dropped while recording.
-Leave half a second of margin. Set the range before the clip is first extracted: the `.json` is
-only read then, and changing the range later only brings a warning from `extract_frames`.
+**Trimming cannot save a truncated `.bag`.** librealsense refuses to open a `.bag` cut short,
+whatever range is kept (tried on synthetic bags cut to 50 to 99% of their size, with the Mac's
+librealsense 2.54.2). A clip whose `.json` still says `the recording did not finish`, as after a
+pulled battery or a killed recorder, may be one, so `trim` warns: if `extract_frames` then fails
+on it, mark it bad again. Trimming is for a good recording with a bad start or end, such as one
+stopped too late.
+
+The times are close, not exact: the `.mp4` holds only the frames the recorder received, played at
+a fixed rate, while the range is matched to the camera's timestamps. If frames were dropped
+while recording, `.mp4` times run behind, more so the later in the clip. Leave half a second of
+margin. `trim` warns when the `.mp4` plays more than half a second shorter than the clip's
+`seconds`: then leave a wider margin late in the clip.
+
+Set the range before the clip is first extracted: the `.json` is only read then, and changing the
+range later only brings a warning from `extract_frames`. The range lives only in the Mac's copy
+of the `.json`; the Drive's copy and the Jetson's keep the untrimmed one, which is why the clip
+should also be marked bad in the field: a fresh download then skips it, not extracts it whole.
+Do not `upload` from the Mac afterwards: it reports a conflict for a trimmed clip's `.json`.
+Marking the last clip bad or not on the record page keeps a range already saved in its `.json`.
 
 ## Reading a source from the command line (`run.py`)
 
@@ -479,7 +493,7 @@ Unlike the rest of the package, it imports `pyrealsense2` directly and has no te
 
 ## Tests
 
-206 tests in the files below, run with `python -m pytest` from the package folder. The training
+213 tests in the files below, run with `python -m pytest` from the package folder. The training
 pipeline's tests, `test_dataset.py`, `test_extract_frames.py` and the others named after its
 steps, are not listed here. All pass on the Mac and on the
 Jetson. None of them needs a camera
@@ -490,8 +504,8 @@ or a network.
 | `test_frame_source.py` | 6 | Depth scaling, zero kept as unknown, `float32`, the `Frame` unpacks in the agreed order, iteration and `with` blocks |
 | `test_realsense_source.py` | 12 | `BagSource` end to end on a synthetic bag: every frame once (the buffer copy), depth in meters, zeros kept, the image is left IR, timestamps in seconds, recorded intrinsics, no IMU, missing file. Also the USB frame rate choice and the macOS IMU refusal. |
 | `test_process_source.py` | 11 | Frames and images cross the process boundary, `fps` is passed back, open errors, open timeouts and a Ctrl+C while opening end the child, the source is closed before the child exits, Ctrl+C does not kill the child early, a frozen child is killed and reported, a dying child is reported |
-| `test_record.py` | 71 | Clip numbers and names, the shared counter (never reused, a counter file that is not a number from 1 refused), a taken clip name getting `-2`, `--domain` and the folders, giving files, folders and the counter back under `sudo`, the details file and its fields, the details marked bad until the clip ends (and when the last write fails, after an unexpected error, or after a Ctrl+C while the camera closes), Ctrl+C mid-clip saving a good clip, a failed start that leaves a `.bag`, `seconds` ending at the last frame (after a camera error too), marking bad (by hand, after a camera error, refused while recording or after cleanup), preview and recording sessions, the preview video's frame count, status states, error handling, the camera loop following the button, and every web endpoint |
-| `test_trim.py` | 20 | Finding a clip by its number or name, a number two clips share, keeping a range and clearing `bad`, refused ranges, an end past the clip's end, `--all`, a clip with no `.json`, a `.json` that is not JSON, the command line, and that `extract_frames` reads what it writes |
+| `test_record.py` | 72 | Clip numbers and names, the shared counter (never reused, a counter file that is not a number from 1 refused), a taken clip name getting `-2`, `--domain` and the folders, giving files, folders and the counter back under `sudo`, the details file and its fields, the details marked bad until the clip ends (and when the last write fails, after an unexpected error, or after a Ctrl+C while the camera closes), Ctrl+C mid-clip saving a good clip, a failed start that leaves a `.bag`, `seconds` ending at the last frame (after a camera error too), marking bad (by hand, after a camera error, refused while recording or after cleanup), preview and recording sessions, the preview video's frame count, status states, error handling, the camera loop following the button, and every web endpoint |
+| `test_trim.py` | 26 | Finding a clip by its number or name (with or without `.bag`), a number two clips share, keeping a range and clearing `bad`, refused ranges (NaN and infinity too), `-0` saved as `0`, an end past the clip's end, `--all`, a clip with no `.json`, a `.json` that is not JSON, the warnings for a clip that did not finish and an `.mp4` shorter than the clip, the command line, and that `extract_frames` reads what it writes |
 | `test_run.py` | 9 | The depth summary ignores zeros, the summary line, frame counting and `--max-frames`, and replaying a synthetic bag through `main()` |
 | `test_clip_storage.py` | 60 | Clip grouping, still-being-written, copy and delete decisions, the rclone listing format, `upload`, `download`, `cleanup`, the command line, an unreadable clip, Ctrl+C, partial downloads and a login that expires mid-run, all with an in-memory rclone |
 | `test_clip_storage_rclone.py` | 4 | `upload`, `download` and `cleanup` with the real rclone between two local folders (skipped where rclone is missing) |

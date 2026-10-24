@@ -7,6 +7,8 @@ the recorder writes. Nothing is replayed.
 import json
 import os
 
+import numpy as np
+
 import pytest
 
 from perch_perception.data_collection import trim
@@ -38,7 +40,7 @@ def test_keeping_part_of_a_clip_saves_the_range_and_clears_bad(tmp_path):
     assert details['number'] == 42  # the rest is left as it was
 
 
-@pytest.mark.parametrize('name', ['42', '0042', CLIP])
+@pytest.mark.parametrize('name', ['42', '0042', CLIP, CLIP + '.bag'])
 def test_a_clip_is_found_by_its_number_or_its_name(tmp_path, name):
     write_clip(tmp_path)
     write_clip(tmp_path, '0043_2026-10-23T14-03-40')
@@ -62,7 +64,8 @@ def test_a_clip_that_is_not_in_the_folder_is_refused(tmp_path):
         trim.find_clip(tmp_path, '43')
 
 
-@pytest.mark.parametrize('start, end', [(5, 5), (8, 3), (-1, 4)])
+@pytest.mark.parametrize('start, end', [(5, 5), (8, 3), (-1, 4), (float('nan'), 4),
+                                        (0, float('inf'))])
 def test_a_range_that_is_not_from_start_up_to_a_later_end_is_refused(tmp_path, start, end):
     write_clip(tmp_path)
 
@@ -164,3 +167,38 @@ def test_extraction_reads_the_range_trim_writes(tmp_path):
     trim.set_keep(tmp_path / f'{CLIP}.bag', 1.5, 9)
 
     assert extract_reads(tmp_path / f'{CLIP}.bag')['keep'] == [1.5, 9]
+
+
+def test_minus_zero_is_saved_as_zero(tmp_path):
+    write_clip(tmp_path)
+
+    trim.set_keep(tmp_path / f'{CLIP}.bag', -0.0, 5)
+
+    assert str(read_details(tmp_path)['keep'][0]) == '0.0'
+
+
+def test_trimming_a_clip_that_did_not_finish_warns_that_its_bag_may_not_open(tmp_path, capsys):
+    # librealsense cannot open a truncated .bag, and trimming does not change that.
+    write_clip(tmp_path, error='the recording did not finish', seconds=None)
+
+    trim.main(['42', '--keep', '0', '5', '--domain', 'outdoor', '--folder', str(tmp_path)])
+
+    assert 'may not open' in capsys.readouterr().out
+
+
+def test_a_preview_video_shorter_than_the_clip_is_warned_about(tmp_path, capsys):
+    # Frames the recorder dropped are missing from the .mp4, so its times run behind the clip's.
+    from perch_perception.data_collection.record import PreviewVideo
+
+    cv2 = pytest.importorskip('cv2')
+    write_clip(tmp_path, seconds=14.2)
+    video = PreviewVideo(str(tmp_path / f'{CLIP}.mp4'), 10)
+    for _ in range(100):  # 10 s at 10 fps
+        video.write(np.zeros((48, 64), dtype=np.uint8))
+    video.close()
+    assert cv2.VideoCapture(str(tmp_path / f'{CLIP}.mp4')).isOpened()
+
+    trim.main(['42', '--keep', '0', '5', '--domain', 'outdoor', '--folder', str(tmp_path)])
+
+    out = capsys.readouterr().out
+    assert 'warning' in out and '10 s' in out and '14.2 s' in out

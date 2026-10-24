@@ -394,6 +394,17 @@ def test_the_last_clip_can_be_marked_bad_and_unmarked(tmp_path):
     assert recorder.status()['last_bad'] is False
 
 
+def test_marking_keeps_a_range_trim_saved_in_the_details(tmp_path):
+    recorder = make_recorder(FakeCamera(), tmp_path)
+    record_one_clip(recorder)
+    details = read_details(tmp_path)
+    (tmp_path / (CLIP + '.json')).write_text(json.dumps(dict(details, keep=[0, 5])))
+
+    recorder.mark_last_clip_bad(True)
+
+    assert read_details(tmp_path)['keep'] == [0, 5]
+
+
 def test_marking_bad_before_any_clip_is_refused(tmp_path):
     recorder = make_recorder(FakeCamera(), tmp_path)
 

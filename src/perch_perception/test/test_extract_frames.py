@@ -326,7 +326,9 @@ def test_every_nth_frame_counts_from_the_start_of_the_clip_not_of_the_range(tmp_
     assert [row.frame_index for row in rows] == [10, 15]
 
 
-def test_reading_stops_after_the_kept_range_so_a_broken_end_is_never_reached(tmp_path):
+def test_reading_stops_after_the_kept_range(tmp_path):
+    # The frames after the range are never read: an error there is never reached. (This does
+    # not save a truncated .bag: librealsense refuses to open one at all.)
     dataset = Dataset(tmp_path / 'dataset')
     folder = tmp_path / 'bags'
     write_bag(folder, 'a')
@@ -341,6 +343,29 @@ def test_reading_stops_after_the_kept_range_so_a_broken_end_is_never_reached(tmp
 
     assert summary.extracted == ['a']
     assert [row.frame_index for row in dataset.read_frames()] == [0]
+
+
+def test_a_frame_exactly_at_either_end_of_the_range_is_kept(tmp_path):
+    # 5.1 - 5.0 is 0.0999... in floating point, which must still count as 0.1 s.
+    dataset = Dataset(tmp_path / 'dataset')
+    frames = [frame._replace(timestamp=5.0 + index / 10)
+              for index, frame in enumerate(numbered_frames(6))]
+
+    rows = extract_clip(dataset, ListSource(frames), 'a', 'outdoor', every=1, keep=[0.1, 0.3])
+
+    assert [row.frame_index for row in rows] == [1, 2, 3]
+
+
+def test_a_kept_range_with_no_extracted_frame_is_warned_about(tmp_path, capsys):
+    # Every 10th frame of a 0.1 s range at 30 fps can be none at all.
+    folder = tmp_path / 'bags'
+    write_bag(folder, 'a')
+    write_details(folder, 'a', keep=[0.05, 0.2])
+
+    main([str(folder), '--domain', 'outdoor', '--dataset', str(tmp_path / 'dataset')],
+         open_bag=open_fake_bags({'a': 25}))
+
+    assert 'warning: a gave no frames' in capsys.readouterr().out
 
 
 def test_the_kept_range_goes_into_clips_csv(tmp_path):
