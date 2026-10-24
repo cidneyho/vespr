@@ -8,12 +8,20 @@ folder, ~/vespr_recordings/indoor or ~/vespr_recordings/outdoor. On macOS,
 run it with sudo. To control a recorder on the Jetson from a Mac, see
 "Recording from the Mac" in the package README.
 
-The page shows the live left IR image and a Record / Stop button. Every clip
-is saved as two files named by its start time:
+The page shows the live left IR image, a Record / Stop button, fields for the
+site, branch, light and notes, and a button to mark the last clip bad. Every
+clip is named by its number and its start time, for example
+0042_2026-10-23T14-02-11, and saved as three files:
 
-    <timestamp>.bag   raw depth and left IR. This is the data.
-    <timestamp>.mp4   a small grayscale video for watching the clip. It is
-                      lossy, so never use it for training or measurement.
+    <name>.bag   raw depth and left IR. This is the data.
+    <name>.mp4   a small grayscale video for watching the clip. It is
+                 lossy, so never use it for training or measurement.
+    <name>.json  the clip's details: number, domain, start time, length,
+                 the page's fields, and whether it is marked bad.
+
+Clip numbers come from one counter file, ~/vespr_recordings/next_clip_id,
+shared by both domains. A number is never handed out twice, so it can be
+written down while recording and used later to find the clip.
 
 librealsense writes the .bag itself, and only from the moment the camera
 starts. So the camera is restarted whenever recording starts or stops. One
@@ -28,6 +36,7 @@ import argparse
 import http.server
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -38,6 +47,7 @@ import cv2
 from perch_perception.process_source import ProcessSource
 
 DOMAINS = ('indoor', 'outdoor')  # evaluated separately, so their clips are kept apart
+DETAIL_FIELDS = ('site', 'branch', 'light', 'notes')  # typed on the page, kept from clip to clip
 
 PAGE = """<!doctype html>
 <html>
@@ -49,23 +59,49 @@ PAGE = """<!doctype html>
   img { max-width: 100%; border: 4px solid #333; }
   img.recording { border-color: #d22; }
   button { font-size: 1.5em; padding: 0.4em 1.5em; margin: 0.6em; }
-  #error { color: #f66; }
+  #status { font-size: 1.6em; }
+  label { margin: 0 0.5em; }
+  input { font-size: 1em; width: 8em; }
+  #notes { width: 16em; }
+  #error, #refused { color: #f66; }
 </style>
 </head>
 <body>
 <img id="view" src="/stream" alt="live camera view">
+<div>
+  <label>Site <input id="site"></label>
+  <label>Branch <input id="branch"></label>
+  <label>Light <input id="light" list="lights"></label>
+  <label>Notes <input id="notes"></label>
+  <datalist id="lights">
+    <option>sun</option><option>overcast</option><option>dusk</option>
+    <option>backlit</option><option>indoor lights</option>
+  </datalist>
+</div>
 <div><button id="button">Record</button></div>
 <div id="status">Connecting...</div>
 <div id="last"></div>
+<div><button id="bad" hidden>Mark bad</button></div>
 <div id="error"></div>
+<div id="refused"></div>
 <script>
+const FIELDS = ['site', 'branch', 'light', 'notes'];
 const view = document.getElementById('view');
 const button = document.getElementById('button');
+const bad = document.getElementById('bad');
 let state = 'preview';
+let lastBad = false;
+let filled = false;
+
+// A clip's number, the part of its name before the first '_', for example #0042.
+function number(clip) {
+  return '#' + clip.split('_')[0];
+}
 
 // Redraw the page from the status the server reports.
 function show(status) {
   state = status.state;
+  lastBad = status.last_bad;
   const recording = state === 'recording' || state === 'stopping';
   button.textContent = recording ? 'Stop' : 'Record';
   // The camera restarts when recording starts or stops; no clicks meanwhile.
@@ -74,19 +110,50 @@ function show(status) {
   const lines = {
     preview: 'Ready',
     starting: 'Starting the camera...',
-    recording: 'Recording ' + status.clip + '   ' + status.seconds + ' s',
+    recording: 'Recording ' + (status.clip ? number(status.clip) : '') + '   ' + status.seconds + ' s',
     stopping: 'Saving...',
   };
   document.getElementById('status').textContent = lines[state];
   document.getElementById('last').textContent = status.last_clip
-    ? 'Last clip: ' + status.folder + '/' + status.last_clip + '.bag' : '';
+    ? 'Last clip: ' + number(status.last_clip) + (status.last_bad ? ' (marked bad)' : '')
+      + '   ' + status.folder + '/' + status.last_clip + '.bag' : '';
+  // Only the last clip can be marked, and only between clips.
+  bad.hidden = !status.last_clip || state !== 'preview';
+  if (status.last_clip) {
+    bad.textContent = (status.last_bad ? 'Unmark ' : 'Mark ') + number(status.last_clip) + ' bad';
+  }
   document.getElementById('error').textContent = status.error || '';
+  // Fill the fields once, from what the recorder kept, so reloading the page keeps them.
+  if (!filled) {
+    FIELDS.forEach(field => { document.getElementById(field).value = status.details[field]; });
+    filled = true;
+  }
+}
+
+// Send a request with a JSON body. A refusal is shown until the next request.
+function send(path, body) {
+  document.getElementById('refused').textContent = '';
+  fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'},
+               body: JSON.stringify(body)})
+    .then(reply => reply.json().then(answer => {
+      if (reply.ok) {
+        show(answer);
+      } else {
+        document.getElementById('refused').textContent = answer.error;
+      }
+    }));
 }
 
 button.onclick = () => {
-  const action = state === 'recording' ? '/stop' : '/start';
-  fetch(action, {method: 'POST'}).then(reply => reply.json()).then(show);
+  if (state === 'recording') {
+    send('/stop', {});
+    return;
+  }
+  const details = {};
+  FIELDS.forEach(field => { details[field] = document.getElementById(field).value; });
+  send('/start', details);
 };
+bad.onclick = () => send('/bad', {bad: !lastBad});
 // Ask the server for its status twice a second. If it does not answer, say
 // so instead of leaving the last status on screen.
 function recorderGone() {
@@ -101,9 +168,17 @@ setInterval(
 """
 
 
-def clip_name(now):
-    """Name a clip by its start time, for example 2026-10-10T14-32-05."""
-    return now.strftime('%Y-%m-%dT%H-%M-%S')
+class NothingToMark(ValueError):
+    """Mark bad was pressed before this recorder recorded any clip."""
+
+
+def clip_name(number, now):
+    """Name a clip by its number and start time, for example 0042_2026-10-10T14-32-05.
+
+    The number comes first, padded to 4 digits, so clips sort by number. Colons are left out of
+    the time so the name is valid on every file system.
+    """
+    return f'{number:04d}_{now:%Y-%m-%dT%H-%M-%S}'
 
 
 def default_folder():
@@ -123,6 +198,71 @@ def default_folder():
 def domain_folder(domain):
     """Return the clip folder of a domain, for example ~/vespr_recordings/indoor."""
     return os.path.join(default_folder(), domain)
+
+
+def counter_path():
+    """Return the clip counter's file, next to the domain folders, so both domains share it."""
+    return os.path.join(default_folder(), 'next_clip_id')
+
+
+def write_file_atomically(path, text):
+    """Replace a file's contents in one step, so a power cut never leaves it half written.
+
+    The text goes to a temporary file first and is flushed to the disk (fsync); os.replace then
+    swaps it in for the old file in a single operation. The drone's battery can be pulled at
+    any moment, which is why the flush matters.
+    """
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    temporary = path + '.tmp'
+    with open(temporary, 'w') as file:
+        file.write(text)
+        file.flush()
+        os.fsync(file.fileno())
+    os.replace(temporary, path)
+    hand_to_user(path)
+
+
+def take_clip_number(path):
+    """Return the next clip number from the counter file at path, and store the one after it.
+
+    The count is kept in a file, not worked out from the clips in the folder, because
+    clip_storage cleanup deletes clips once they are on the Drive: a number is never handed out
+    twice, even after its clip is deleted. A missing file starts the count at 1. Raises
+    RuntimeError naming the file, and changes nothing, if it holds anything but a number from 1.
+    """
+    try:
+        with open(path) as file:
+            text = file.read()
+    except FileNotFoundError:
+        number = 1
+    else:
+        if not re.fullmatch(r'[0-9]+', text.strip()) or int(text) < 1:
+            raise RuntimeError(
+                f'{path} should hold the next clip number, but holds {text!r}. '
+                'Write the next number into it, higher than every clip so far.')
+        number = int(text)
+    write_file_atomically(path, f'{number + 1}\n')
+    return number
+
+
+def clean_details(details):
+    """Return the page's fields, {field: text}, with spaces trimmed and missing fields ''.
+
+    Raises ValueError naming the field for one that is not in DETAIL_FIELDS or not text.
+    """
+    if not isinstance(details, dict):
+        raise ValueError('the details must be a JSON object of text fields')
+    for field, value in details.items():
+        if field not in DETAIL_FIELDS:
+            raise ValueError(f'{field!r} is not a detail field: {", ".join(DETAIL_FIELDS)}')
+        if not isinstance(value, str):
+            raise ValueError(f'the detail {field!r} must be text')
+    return {field: details.get(field, '').strip() for field in DETAIL_FIELDS}
+
+
+def write_details(path, details):
+    """Write a clip's details file, <name>.json."""
+    write_file_atomically(path, json.dumps(details, indent=2) + '\n')
 
 
 def free_clip_name(folder, name):
@@ -187,14 +327,22 @@ class Recorder:
     open_source(record_to) opens the camera and returns a FrameSource. Given
     a path it also records a .bag there; given None it only streams.
 
+    counter is the clip counter's file (see take_clip_number), and domain goes
+    into every clip's details.
+
     Two threads use a Recorder: the camera loop (run) and the web server
-    (start, stop, status, latest_jpeg). The lock guards what they share.
+    (start, stop, mark_last_clip_bad, status, latest_jpeg). The lock guards what
+    they share.
     """
 
-    def __init__(self, open_source, folder, clock=datetime.now):
+    def __init__(self, open_source, folder, counter, clock=datetime.now, domain=None):
         self._open_source = open_source
         self._folder = str(folder)
+        self._counter = str(counter)
         self._clock = clock
+        self._domain = domain
+        self._details = clean_details({})  # the page's fields, for the next clip
+        self._last_details = None  # the details of the last clip, as in its .json
         self._lock = threading.Lock()
         self._wanted = False  # what the button last asked for
         self._clip = None  # name of the clip being recorded, or None
@@ -206,9 +354,17 @@ class Recorder:
         self._jpeg_count = 0  # goes up by one with every new image
         self._quit = False
 
-    def start(self):
-        """Ask for a recording. The camera loop acts on it."""
+    def start(self, details=None):
+        """Ask for a recording. The camera loop acts on it.
+
+        details, the page's fields as {field: text}, replaces the fields kept from the clip
+        before; None keeps them. Raises ValueError, asking for nothing, if a field is unknown
+        or not text.
+        """
+        cleaned = None if details is None else clean_details(details)
         with self._lock:
+            if cleaned is not None:
+                self._details = cleaned
             self._wanted = True
             self._error = None
 
@@ -216,6 +372,21 @@ class Recorder:
         """Ask for the recording to end."""
         with self._lock:
             self._wanted = False
+
+    def mark_last_clip_bad(self, bad):
+        """Mark the last clip bad (True) or not (False) in its .json. Nothing is deleted.
+
+        extract_frames skips clips marked bad. Raises NothingToMark if this recorder has not
+        recorded a clip yet, and ValueError if bad is not True or False.
+        """
+        if not isinstance(bad, bool):
+            raise ValueError('bad must be true or false')
+        with self._lock:
+            if self._last_details is None:
+                raise NothingToMark('there is no clip to mark yet')
+            details = dict(self._last_details, bad=bad)
+            write_details(os.path.join(self._folder, details['clip'] + '.json'), details)
+            self._last_details = details
 
     def quit(self):
         """Ask the camera loop to finish."""
@@ -240,6 +411,8 @@ class Recorder:
                 'clip': self._clip,
                 'seconds': round(seconds, 1),
                 'last_clip': self._last_clip,
+                'last_bad': self._last_details is not None and self._last_details['bad'],
+                'details': dict(self._details),
                 'error': self._error,
                 'folder': self._folder,
             }
@@ -277,32 +450,61 @@ class Recorder:
             self._report(error)
 
     def _record_clip(self):
-        os.makedirs(self._folder, exist_ok=True)
-        name = free_clip_name(self._folder, clip_name(self._clock()))
+        started = self._clock()
+        try:
+            os.makedirs(self._folder, exist_ok=True)
+            # The number is taken before the camera opens. If the camera then fails, the number
+            # is simply skipped: a gap in the numbers is harmless, a number used twice is not.
+            number = take_clip_number(self._counter)
+        except (OSError, RuntimeError) as error:
+            self._report(error)
+            return
+        name = free_clip_name(self._folder, clip_name(number, started))
         bag_path = os.path.join(self._folder, name + '.bag')
         video_path = os.path.join(self._folder, name + '.mp4')
+        details_path = os.path.join(self._folder, name + '.json')
+        with self._lock:
+            details = {'clip': name, 'number': number, 'domain': self._domain,
+                       'started': started.isoformat(timespec='seconds'), 'seconds': 0.0,
+                       **self._details, 'bad': False}
         video = None
         try:
             # Leaving this with block stops the camera, and stopping the
             # camera is what makes librealsense finish the .bag.
             with self._open_source(bag_path) as source:
-                video = PreviewVideo(video_path, source.fps)
                 with self._lock:
                     self._clip = name
                     self._clip_started = time.monotonic()
+                # Written as soon as the .bag exists, so a clip never lacks its details.
+                write_details(details_path, details)
+                video = PreviewVideo(video_path, source.fps)
                 for frame in source:
                     self._publish(frame.image)
                     video.write(frame.image)
                     if self._should_leave(recording=True):
                         break
-        except RuntimeError as error:
+        except (OSError, RuntimeError) as error:
+            # A clip cut short may not replay to the end, so it is marked bad. The person
+            # recording can unmark it if it turns out fine.
+            details['bad'] = True
+            details['error'] = str(error)
             self._report(error)
         finally:
             if video is not None:
                 video.close()
             with self._lock:
-                if self._clip is not None:
+                recorded = self._clip is not None
+                if recorded:
+                    details['seconds'] = round(time.monotonic() - self._clip_started, 1)
+            if recorded:
+                try:
+                    write_details(details_path, details)
+                except OSError as error:
+                    self._report(error)
+            with self._lock:
+                if recorded:
                     self._last_clip = name
+                    self._last_details = details
                 self._clip = None
                 # However the clip ended, go back to preview.
                 self._wanted = False
@@ -362,20 +564,41 @@ def make_server(recorder, port):
                 self.send_error(404)
 
         def do_POST(self):
-            if self.path == '/start':
-                recorder.start()
-            elif self.path == '/stop':
-                recorder.stop()
-            else:
+            if self.path not in ('/start', '/stop', '/bad'):
                 self.send_error(404)
                 return
-            self._send_status()
+            try:
+                body = self._read_json()
+                if self.path == '/start':
+                    recorder.start(body)  # no body keeps the fields of the clip before
+                elif self.path == '/stop':
+                    recorder.stop()
+                else:
+                    if not isinstance(body, dict) or not isinstance(body.get('bad'), bool):
+                        raise ValueError('send {"bad": true} or {"bad": false}')
+                    recorder.mark_last_clip_bad(body['bad'])
+            except NothingToMark as error:
+                self._send_error(409, error)  # 409 Conflict: fine, but not now
+            except ValueError as error:
+                self._send_error(400, error)  # 400 Bad Request; bad JSON is a ValueError too
+            else:
+                self._send_status()
+
+        def _read_json(self):
+            """Return the request's JSON body, or None if it has none."""
+            length = int(self.headers.get('Content-Length') or 0)
+            if length == 0:
+                return None
+            return json.loads(self.rfile.read(length))
 
         def _send_status(self):
             self._send('application/json', json.dumps(recorder.status()).encode())
 
-        def _send(self, content_type, body):
-            self.send_response(200)
+        def _send_error(self, code, error):
+            self._send('application/json', json.dumps({'error': str(error)}).encode(), code)
+
+        def _send(self, content_type, body, code=200):
+            self.send_response(code)
             self.send_header('Content-Type', content_type)
             self.send_header('Content-Length', str(len(body)))
             self.end_headers()
@@ -438,12 +661,12 @@ def main(argv=None):
     def open_session(record_to):
         return ProcessSource(open_camera, (args.width, args.height, args.fps, record_to))
 
-    recorder = Recorder(open_session, args.out)
+    recorder = Recorder(open_session, args.out, counter_path(), domain=args.domain)
     server = make_server(recorder, args.port)
     # The web server runs on its own thread; the camera loop keeps this one.
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f'open http://localhost:{args.port} in your browser')
-    print(f'clips are saved to {args.out}')
+    print(f'clips are saved to {args.out}, numbered by {counter_path()}')
     # Clips are named by this clock. A Jetson without internet may have the
     # wrong time, so show it before anything is recorded.
     print(f'this computer\'s clock reads {datetime.now():%Y-%m-%d %H:%M}; '

@@ -1,4 +1,4 @@
-"""Tests for record.py: clip naming, the preview/recording sessions, and the web page.
+"""Tests for record.py: clip numbers and names, clip details, the sessions, and the web page.
 
 No camera is used. FakeCamera stands in for the function that opens the camera
 and hands out in-memory sources.
@@ -8,6 +8,7 @@ import json
 import os
 import threading
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime
 
@@ -20,7 +21,7 @@ from fake_source import ListSource, make_frame  # noqa: E402
 from perch_perception.data_collection import record  # noqa: E402
 
 NOW = datetime(2026, 10, 10, 14, 32, 5)
-CLIP = '2026-10-10T14-32-05'
+CLIP = '0001_2026-10-10T14-32-05'  # the first clip a fresh counter hands out
 SHAPE = (48, 64)  # rows, columns: big enough for a video encoder
 
 
@@ -61,8 +62,20 @@ class FakeCamera:
         return source
 
 
-def make_recorder(camera, folder):
-    return record.Recorder(camera, folder, clock=lambda: NOW)
+def make_recorder(camera, folder, counter=None, domain='outdoor'):
+    # The real counter sits next to the domain folders; a test keeps its own in the clip folder.
+    if counter is None:
+        counter = os.path.join(str(folder), 'next_clip_id')
+    return record.Recorder(camera, folder, counter, clock=lambda: NOW, domain=domain)
+
+
+def record_one_clip(recorder, details=None):
+    recorder.start(details)
+    recorder.run_session()
+
+
+def read_details(folder, clip=CLIP):
+    return json.loads((folder / (clip + '.json')).read_text())
 
 
 def count_video_frames(path):
@@ -74,8 +87,177 @@ def count_video_frames(path):
     return count
 
 
-def test_clip_name_is_an_iso_timestamp_without_colons():
-    assert record.clip_name(NOW) == CLIP
+def test_clip_name_is_the_clip_number_then_the_start_time_without_colons():
+    assert record.clip_name(42, NOW) == '0042_2026-10-10T14-32-05'
+
+
+def test_clip_numbers_above_9999_keep_every_digit():
+    assert record.clip_name(12345, NOW) == '12345_2026-10-10T14-32-05'
+
+
+def test_without_a_counter_file_the_first_clip_is_number_1(tmp_path):
+    counter = tmp_path / 'next_clip_id'
+
+    assert record.take_clip_number(str(counter)) == 1
+    assert counter.read_text().strip() == '2'
+
+
+def test_clip_numbers_go_up_by_one(tmp_path):
+    counter = str(tmp_path / 'next_clip_id')
+
+    assert [record.take_clip_number(counter) for _ in range(3)] == [1, 2, 3]
+
+
+def test_the_counter_carries_on_from_the_number_in_its_file(tmp_path):
+    counter = tmp_path / 'next_clip_id'
+    counter.write_text('120\n')
+
+    assert record.take_clip_number(str(counter)) == 120
+
+
+def test_a_counter_file_that_is_not_a_number_is_refused(tmp_path):
+    counter = tmp_path / 'next_clip_id'
+    counter.write_text('twelve')
+
+    with pytest.raises(RuntimeError, match='next_clip_id'):
+        record.take_clip_number(str(counter))
+    assert counter.read_text() == 'twelve'
+
+
+def test_the_counter_sits_next_to_the_domain_folders(monkeypatch):
+    # One counter for indoor and outdoor, so a number names one clip only.
+    monkeypatch.delenv('SUDO_USER', raising=False)
+
+    assert record.counter_path() == os.path.expanduser('~/vespr_recordings/next_clip_id')
+
+
+def test_indoor_and_outdoor_recorders_share_one_counter(tmp_path):
+    counter = str(tmp_path / 'next_clip_id')
+    indoor = make_recorder(FakeCamera(), tmp_path / 'indoor', counter, domain='indoor')
+    outdoor = make_recorder(FakeCamera(), tmp_path / 'outdoor', counter, domain='outdoor')
+
+    record_one_clip(indoor)
+    record_one_clip(outdoor)
+
+    assert indoor.status()['last_clip'] == '0001_2026-10-10T14-32-05'
+    assert outdoor.status()['last_clip'] == '0002_2026-10-10T14-32-05'
+
+
+def test_a_number_is_never_reused_when_its_clip_is_deleted(tmp_path):
+    # clip_storage cleanup deletes uploaded clips from the Jetson, so the folder cannot say
+    # which numbers were used.
+    recorder = make_recorder(FakeCamera(), tmp_path)
+    record_one_clip(recorder)
+    for suffix in ('.bag', '.mp4', '.json'):
+        (tmp_path / (CLIP + suffix)).unlink(missing_ok=True)
+
+    record_one_clip(recorder)
+
+    assert recorder.status()['last_clip'] == '0002_2026-10-10T14-32-05'
+
+
+def test_a_broken_counter_stops_the_recording_before_the_camera_records(tmp_path):
+    (tmp_path / 'next_clip_id').write_text('twelve')
+    camera = FakeCamera()
+    recorder = make_recorder(camera, tmp_path)
+
+    record_one_clip(recorder)
+
+    assert 'next_clip_id' in recorder.status()['error']
+    assert recorder.status()['state'] == 'preview'
+    assert camera.opened_with == []
+
+
+def test_a_recording_writes_its_details_next_to_the_bag(tmp_path):
+    record_one_clip(make_recorder(FakeCamera(), tmp_path))
+
+    details = read_details(tmp_path)
+    seconds = details.pop('seconds')
+    assert details == {
+        'clip': CLIP, 'number': 1, 'domain': 'outdoor', 'started': '2026-10-10T14:32:05',
+        'site': '', 'branch': '', 'light': '', 'notes': '', 'bad': False}
+    assert seconds >= 0
+
+
+def test_the_details_given_with_start_are_saved_with_the_clip(tmp_path):
+    recorder = make_recorder(FakeCamera(), tmp_path)
+
+    record_one_clip(recorder, {'site': ' Park ', 'branch': '7', 'light': 'overcast',
+                               'notes': 'head-on'})
+
+    details = read_details(tmp_path)
+    assert (details['site'], details['branch'], details['light'], details['notes']) == (
+        'Park', '7', 'overcast', 'head-on')
+
+
+def test_the_details_carry_over_to_the_next_clip(tmp_path):
+    recorder = make_recorder(FakeCamera(), tmp_path)
+    record_one_clip(recorder, {'site': 'park', 'branch': '7'})
+
+    record_one_clip(recorder)
+
+    details = read_details(tmp_path, '0002_2026-10-10T14-32-05')
+    assert (details['site'], details['branch']) == ('park', '7')
+    assert recorder.status()['details']['branch'] == '7'
+
+
+def test_an_unknown_detail_is_refused(tmp_path):
+    recorder = make_recorder(FakeCamera(), tmp_path)
+
+    with pytest.raises(ValueError, match='colour'):
+        recorder.start({'colour': 'green'})
+    assert recorder.status()['state'] == 'preview'
+
+
+def test_a_detail_that_is_not_text_is_refused(tmp_path):
+    recorder = make_recorder(FakeCamera(), tmp_path)
+
+    with pytest.raises(ValueError, match='branch'):
+        recorder.start({'branch': 7})
+
+
+def test_no_details_file_is_written_when_the_camera_fails_to_open(tmp_path):
+    def broken_camera(record_to):
+        raise RuntimeError('no RealSense camera is connected')
+
+    record_one_clip(make_recorder(broken_camera, tmp_path))
+
+    assert list(tmp_path.glob('*.json')) == []
+
+
+def test_a_camera_error_while_recording_marks_the_clip_bad(tmp_path):
+    # A clip cut short may not replay to the end, and extract_frames skips clips marked bad.
+    def fail():
+        raise RuntimeError('frame did not arrive within 5000')
+
+    recorder = make_recorder(FakeCamera(before_frame=2, callback=fail), tmp_path)
+
+    record_one_clip(recorder)
+
+    details = read_details(tmp_path)
+    assert details['bad'] is True
+    assert 'frame did not arrive' in details['error']
+    assert recorder.status()['last_bad'] is True
+
+
+def test_the_last_clip_can_be_marked_bad_and_unmarked(tmp_path):
+    recorder = make_recorder(FakeCamera(), tmp_path)
+    record_one_clip(recorder)
+
+    recorder.mark_last_clip_bad(True)
+    assert read_details(tmp_path)['bad'] is True
+    assert recorder.status()['last_bad'] is True
+
+    recorder.mark_last_clip_bad(False)
+    assert read_details(tmp_path)['bad'] is False
+    assert recorder.status()['last_bad'] is False
+
+
+def test_marking_bad_before_any_clip_is_refused(tmp_path):
+    recorder = make_recorder(FakeCamera(), tmp_path)
+
+    with pytest.raises(ValueError, match='no clip'):
+        recorder.mark_last_clip_bad(True)
 
 
 def test_default_folder_is_in_the_home_folder_outside_icloud(monkeypatch):
@@ -296,9 +478,14 @@ def served(tmp_path):
     server.server_close()
 
 
-def post(url):
-    request = urllib.request.Request(url, data=b'', method='POST')
-    return urllib.request.urlopen(request, timeout=5).status
+def post(url, body=None):
+    data = b'' if body is None else json.dumps(body).encode()
+    request = urllib.request.Request(url, data=data, method='POST',
+                                     headers={'Content-Type': 'application/json'})
+    try:
+        return urllib.request.urlopen(request, timeout=5).status
+    except urllib.error.HTTPError as error:
+        return error.code
 
 
 def test_the_page_has_a_record_button(served):
@@ -315,6 +502,61 @@ def test_posting_start_requests_a_recording(served):
 
     assert post(base + '/start') == 200
     assert recorder.status()['state'] == 'starting'
+
+
+def test_posting_start_with_details_keeps_them_for_the_clip(served):
+    recorder, base = served
+
+    assert post(base + '/start', {'site': 'park', 'branch': '7'}) == 200
+    assert recorder.status()['details']['branch'] == '7'
+
+
+def test_posting_start_with_an_unknown_detail_is_refused(served):
+    recorder, base = served
+
+    assert post(base + '/start', {'colour': 'green'}) == 400
+    assert recorder.status()['state'] == 'preview'
+
+
+def test_posting_start_with_a_body_that_is_not_json_is_refused(served):
+    recorder, base = served
+    request = urllib.request.Request(base + '/start', data=b'{oops', method='POST')
+
+    with pytest.raises(urllib.error.HTTPError) as error:
+        urllib.request.urlopen(request, timeout=5)
+    assert error.value.code == 400
+    assert recorder.status()['state'] == 'preview'
+
+
+def test_posting_bad_marks_the_last_clip(served, tmp_path):
+    recorder, base = served
+    record_one_clip(recorder)
+
+    assert post(base + '/bad', {'bad': True}) == 200
+    assert read_details(tmp_path)['bad'] is True
+
+
+def test_posting_bad_before_any_clip_is_refused(served):
+    _, base = served
+
+    assert post(base + '/bad', {'bad': True}) == 409
+
+
+def test_posting_bad_without_true_or_false_is_refused(served):
+    recorder, base = served
+    record_one_clip(recorder)
+
+    assert post(base + '/bad', {'bad': 'yes'}) == 400
+
+
+def test_the_page_has_the_detail_fields_and_the_bad_button(served):
+    _, base = served
+
+    page = urllib.request.urlopen(base + '/', timeout=5).read().decode()
+
+    for field in ('site', 'branch', 'light', 'notes'):
+        assert f'id="{field}"' in page
+    assert 'id="bad"' in page
 
 
 def test_posting_stop_cancels_the_request(served):
@@ -377,3 +619,4 @@ def test_a_clip_never_replaces_an_earlier_clip_with_the_same_name(tmp_path):
 
     assert camera.opened_with == [str(tmp_path / (CLIP + '-3.bag'))]
     assert (tmp_path / (CLIP + '.bag')).read_bytes() == b'earlier clip'
+    assert read_details(tmp_path, CLIP + '-3')['clip'] == CLIP + '-3'
