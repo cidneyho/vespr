@@ -52,7 +52,7 @@ class ExtractSummary:
     bad: list  # clip names marked bad in their .json, so not extracted
     bad_extracted: list  # clip names marked bad, but extracted before they were marked
     keep_changed: list  # clip names whose range to keep changed after they were extracted
-    no_frames: list  # clip names whose range to keep gave no frame at all
+    no_frames: list  # clip names whose range to keep gave no frame, so they were not added
 
 
 def open_bag_source(path):
@@ -287,7 +287,10 @@ def extract_folder(dataset, folder, domain, every=10, hold=(), batch_size=100, o
         # Any frames of this clip already in the manifest are dropped first: a crash between
         # writing the frames and the clip leaves them behind, and a retry must not add them twice.
         if clip in keeps and not rows:
+            # No row is written, so the clip stays new and is tried again once its range is
+            # widened or --every lowered.
             no_frames.append(clip)
+            continue
         kept = [row for row in dataset.read_frames() if row.clip != clip]
         dataset.write_frames(kept + rows)
         dataset.write_clips(dataset.read_clips() + [clip_row])
@@ -298,7 +301,8 @@ def extract_folder(dataset, folder, domain, every=10, hold=(), batch_size=100, o
         frame_count += len(rows)
 
     batches = pack_batches(dataset, batch_size)
-    return ExtractSummary(new_names, skipped, frame_count, batches, bad, bad_extracted,
+    extracted = [clip for clip in new_names if clip not in no_frames]
+    return ExtractSummary(extracted, skipped, frame_count, batches, bad, bad_extracted,
                           keep_changed, no_frames)
 
 

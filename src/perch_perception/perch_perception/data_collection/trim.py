@@ -19,6 +19,8 @@ import re
 import sys
 from pathlib import Path
 
+import cv2
+
 from perch_perception.data_collection.record import DOMAINS, domain_folder, write_details
 
 
@@ -33,7 +35,7 @@ def find_clip(folder, name):
     after the recorder's counter file is lost.
     """
     folder = Path(folder)
-    name = name.removesuffix('.bag')
+    name = name.removesuffix('.bag').removesuffix('.json')
     if (folder / f'{name}.bag').exists():
         return folder / f'{name}.bag'
     if re.fullmatch(r'[0-9]+', name):
@@ -88,8 +90,6 @@ def set_keep(bag_path, start, end):
 
 def preview_seconds(bag_path):
     """Return how long the clip's .mp4 plays, in seconds, or None if it cannot be read."""
-    import cv2  # imported here, so the rest of this module does not need it
-
     capture = cv2.VideoCapture(str(Path(bag_path).with_suffix('.mp4')))
     try:
         frames = capture.get(cv2.CAP_PROP_FRAME_COUNT)
@@ -144,8 +144,8 @@ def main(argv=None):
             still_bad = ' It is marked bad, so it is still skipped.' if details.get('bad') else ''
             print(f'{bag.stem}: the whole clip is kept.{still_bad}')
         else:
-            start, end = args.keep
-            details = set_keep(bag, start, end)
+            details = set_keep(bag, *args.keep)
+            start, end = details['keep']  # as saved, so -0 shows as 0
             seconds = details.get('seconds')
             of = f' of {seconds:g} s' if isinstance(seconds, (int, float)) else ''
             print(f'{bag.stem}: keeping {start:g} to {end:g} s{of}; it is no longer marked bad')

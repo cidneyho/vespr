@@ -90,7 +90,8 @@ The recorder saves a `.json` of details next to each `.bag`, and extraction read
   and reading stops after the range. The range goes into `clips.csv`
   (`keep`, such as `0-12.5`). A range changed after the clip was extracted brings a warning: its
   frames in the dataset are still those of the old range. A range so short that every Nth frame
-  (`--every`) misses it gives no frames, with a warning.
+  (`--every`) misses it gives no frames, with a warning. Such a clip is not added, so the next
+  run tries it again: widen the range with `trim`, or lower `--every`.
 - A `.json` that is not valid JSON stops the command with an error naming the file.
 
 Clips recorded before the recorder wrote a `.json` have no branch and are never skipped.

@@ -516,14 +516,15 @@ class Recorder:
             self._report(error)
             return
         video = None
-        clip_started = last_frame = None  # time.monotonic() at the start and the last frame
+        clip_started = None  # time.monotonic() when the camera opened to record
+        first_frame = last_frame = None  # time.monotonic() at the first and the last frame
         finished = False  # True once the camera has closed after a normal end
         quitting = None  # a Ctrl+C during the clip, raised again once the camera has closed
         try:
             # Leaving this with block stops the camera, and stopping the
             # camera is what makes librealsense finish the .bag.
             with self._open_source(bag_path) as source:
-                clip_started = last_frame = time.monotonic()
+                clip_started = time.monotonic()
                 with self._lock:
                     self._clip = name
                     self._clip_started = clip_started
@@ -533,6 +534,8 @@ class Recorder:
                         self._publish(frame.image)
                         video.write(frame.image)
                         last_frame = time.monotonic()
+                        if first_frame is None:
+                            first_frame = last_frame
                         if self._should_leave(recording=True):
                             break
                 except KeyboardInterrupt as interrupt:
@@ -552,8 +555,10 @@ class Recorder:
             recorded = clip_started is not None
             bad_on_disk = True  # the unfinished .json, until it is replaced
             if recorded:
-                # seconds ends at the last frame, not after the camera's shutdown.
-                details['seconds'] = round(last_frame - clip_started, 1)
+                # From the first frame to the last, as the .mp4 plays: not from when the camera
+                # opened, nor to the end of its shutdown.
+                details['seconds'] = (0.0 if first_frame is None
+                                      else round(last_frame - first_frame, 1))
                 if not finished and not details['bad']:
                     # Neither a normal end nor a camera error: a bug, or a second Ctrl+C while
                     # the camera was closing, which can leave the .bag unfinished.

@@ -368,6 +368,22 @@ def test_a_kept_range_with_no_extracted_frame_is_warned_about(tmp_path, capsys):
     assert 'warning: a gave no frames' in capsys.readouterr().out
 
 
+def test_a_kept_range_that_gave_no_frames_is_tried_again_once_widened(tmp_path):
+    dataset = Dataset(tmp_path / 'dataset')
+    folder = tmp_path / 'bags'
+    open_bag = open_fake_bags({'a': 25})
+    write_bag(folder, 'a')
+    write_details(folder, 'a', keep=[0.05, 0.2])
+    extract_folder(dataset, folder, 'outdoor', open_bag=open_bag)
+    assert dataset.read_clips() == []  # no row, so the clip still counts as new
+
+    write_details(folder, 'a', keep=[0, 0.5])
+    summary = extract_folder(dataset, folder, 'outdoor', open_bag=open_bag)
+
+    assert summary.extracted == ['a']
+    assert [row.frame_index for row in dataset.read_frames()] == [0, 10]
+
+
 def test_the_kept_range_goes_into_clips_csv(tmp_path):
     dataset = Dataset(tmp_path / 'dataset')
     folder = tmp_path / 'bags'

@@ -40,7 +40,7 @@ def test_keeping_part_of_a_clip_saves_the_range_and_clears_bad(tmp_path):
     assert details['number'] == 42  # the rest is left as it was
 
 
-@pytest.mark.parametrize('name', ['42', '0042', CLIP, CLIP + '.bag'])
+@pytest.mark.parametrize('name', ['42', '0042', CLIP, CLIP + '.bag', CLIP + '.json'])
 def test_a_clip_is_found_by_its_number_or_its_name(tmp_path, name):
     write_clip(tmp_path)
     write_clip(tmp_path, '0043_2026-10-23T14-03-40')
@@ -169,12 +169,13 @@ def test_extraction_reads_the_range_trim_writes(tmp_path):
     assert extract_reads(tmp_path / f'{CLIP}.bag')['keep'] == [1.5, 9]
 
 
-def test_minus_zero_is_saved_as_zero(tmp_path):
+def test_minus_zero_is_saved_and_shown_as_zero(tmp_path, capsys):
     write_clip(tmp_path)
 
-    trim.set_keep(tmp_path / f'{CLIP}.bag', -0.0, 5)
+    trim.main(['42', '--keep', '-0', '5', '--domain', 'outdoor', '--folder', str(tmp_path)])
 
     assert str(read_details(tmp_path)['keep'][0]) == '0.0'
+    assert 'keeping 0 to 5 s' in capsys.readouterr().out
 
 
 def test_trimming_a_clip_that_did_not_finish_warns_that_its_bag_may_not_open(tmp_path, capsys):
@@ -202,3 +203,21 @@ def test_a_preview_video_shorter_than_the_clip_is_warned_about(tmp_path, capsys)
 
     out = capsys.readouterr().out
     assert 'warning' in out and '10 s' in out and '14.2 s' in out
+
+
+def write_preview(folder, frames, fps=10):
+    from perch_perception.data_collection.record import PreviewVideo
+
+    video = PreviewVideo(str(folder / f'{CLIP}.mp4'), fps)
+    for _ in range(frames):
+        video.write(np.zeros((48, 64), dtype=np.uint8))
+    video.close()
+
+
+def test_a_preview_video_as_long_as_the_clip_gives_no_warning(tmp_path, capsys):
+    write_clip(tmp_path, seconds=9.9)  # 100 frames at 10 fps: first to last is 9.9 s
+    write_preview(tmp_path, 100)
+
+    trim.main(['42', '--keep', '0', '5', '--domain', 'outdoor', '--folder', str(tmp_path)])
+
+    assert 'warning' not in capsys.readouterr().out

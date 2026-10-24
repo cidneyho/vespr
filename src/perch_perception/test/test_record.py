@@ -270,6 +270,21 @@ def test_seconds_counts_to_the_last_frame_not_to_the_end_of_the_camera_shutdown(
     assert read_details(tmp_path)['seconds'] < 0.4
 
 
+def test_seconds_counts_from_the_first_frame_not_from_when_the_camera_opened(tmp_path):
+    class SlowFirstFrame(ScriptedSource):
+        def frames(self):
+            time.sleep(0.5)  # the camera is open, but its first frame is late
+            yield from super().frames()
+
+    def camera(record_to):
+        open(record_to, 'wb').close()
+        return SlowFirstFrame([make_frame(0.0, shape=SHAPE)] * 3)
+
+    record_one_clip(make_recorder(camera, tmp_path))
+
+    assert read_details(tmp_path)['seconds'] < 0.4
+
+
 def test_seconds_counts_to_the_last_frame_after_a_camera_error_too(tmp_path):
     class FailsThenClosesSlowly(ScriptedSource):
         def close(self):
