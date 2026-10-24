@@ -19,7 +19,7 @@ because recorded data never goes into git. `dataset.py` owns its layout:
 ```
 vespr_dataset/
   manifest.csv          one row per extracted frame
-  clips.csv             one row per extracted clip: name, domain, size, MD5
+  clips.csv             one row per extracted clip: name, domain, size, MD5, branch
   splits.csv            one row per clip: train, val, hold or test
   images/<frame_id>.png left IR, 8-bit, lossless
   labels/<frame_id>.txt YOLO segmentation polygons; present only once labeled
@@ -27,10 +27,17 @@ vespr_dataset/
   runs/<run_name>/      one folder per training run, with its run.json
 ```
 
-Splits are by clip, never by frame. A new clip goes to `train` or `val` (about 80/20, by a hash
-of its name), and each domain's first clip goes to `val`. Edit `splits.csv` by hand to mark a
-clip `hold` or `test`. Every command that reads `splits.csv` refuses to run if a clip marked
-`hold` or `test` has already been used by a training run.
+Splits are by clip, never by frame. Clips of the same branch are near-copies too, so every clip of
+a branch gets the same split. The branch is the `group` column of `clips.csv`, taken from the site
+and branch fields the recorder saved in the clip's `.json` (for example `park/7`). A clip with no
+branch is a group of one.
+
+A new clip joins the split its branch already has, whatever it is. A new branch, or a clip with
+no branch, goes to `train` or `val` (about 80/20, by a hash of the branch, or of the clip's name
+when it has none), and each domain's first clip goes to `val`. Edit `splits.csv` by hand to mark
+clips `hold` or `test`, and change every clip of a branch together. Every command that reads
+`splits.csv` refuses to run if a clip marked `hold` or `test` has already been used by a training
+run, or if the clips of one branch have different splits.
 
 ## What John runs, start to finish
 
@@ -67,13 +74,31 @@ clip's name is the `.bag` file's name. Frames come from the `.bag` only, never t
 preview. `--domain` is required and applies to every clip in the folder, so keep indoor and
 outdoor clips in separate folders.
 
+The recorder saves a `.json` of details next to each `.bag`, and extraction reads it:
+
+- A clip marked bad is skipped and listed (`skipped 2 clips marked bad: ...`). It is never
+  extracted while it stays marked. A clip marked bad after it was extracted keeps its frames in
+  the dataset, with a warning: nothing removes them by itself.
+- Its site and branch go into `clips.csv` as the clip's branch: trimmed, spaces squeezed and lower
+  case, so `Park ` and `park` are the same site. A branch without a site is the branch alone; a
+  site without a branch is no branch. The branch is read once, when the clip is first extracted:
+  to change it later, edit `group` in `clips.csv`.
+- A clip whose `.json` says the other domain is refused, so an indoor clip in the outdoor folder
+  is caught.
+- A `.json` that is not valid JSON stops the command with an error naming the file.
+
+Clips recorded before the recorder wrote a `.json` have no branch and are never skipped.
+
 Run it again on the same folder whenever new clips arrive. A clip already extracted is skipped
 when its MD5 matches; one with the same name but different content is refused, because two
 recordings can share a name when the Jetson clock is wrong. Rename the file in that case.
 
 `--hold CLIP` (repeat it for more clips) marks a new clip `hold` in `splits.csv` as it is
-extracted. To hold a clip that was extracted earlier, add or edit its row in `splits.csv` by
-hand (a clip has no row until its first labels are imported).
+extracted. Holding one clip of a branch is enough: the branch's other clips join `hold` when their
+labels are imported. A clip whose branch already has clips in another split cannot be held, and
+neither can a clip marked bad. To hold a clip that was extracted earlier, add or edit its row in
+`splits.csv` by hand (a clip has no row until its first labels are imported), with the rows of
+every other clip of its branch.
 
 If a `.bag` cannot be read to the end (for example an unindexed or truncated file), the command
 stops with an error naming the file. Clips before it stay extracted, and the failed clip has no
@@ -120,9 +145,15 @@ The import is refused, changing nothing, if:
 It prints how many frames came back with no branch (`<empty> of <labels> frames came back with no
 branch`): a large number usually means the batch was not finished. Importing a batch again
 replaces its labels and says how many. Each clip that now has labels and no row in `splits.csv`
-is given `train` or `val`, as described above; clips already in `splits.csv`, such as `hold`
-clips, keep their split. Deleting a clip's row from `splits.csv` makes it new again, so the next
-import gives it `train` or `val`: to keep a clip held, change its split, never delete its row.
+is given a split, as described above: its branch's split, or `train` or `val` for a new branch.
+Clips already in `splits.csv`, such as `hold` clips, keep their split. Deleting a clip's row from
+`splits.csv` makes it new again, so the next import gives it a split again: to keep a clip held,
+change its split, never delete its row.
+
+The import ends with a count of clips per split for each domain, such as `outdoor clips: 9 train,
+2 val, 1 hold, 0 test`. It warns when a domain has no clip in `train`: with a single branch, or a
+single branch name, every clip of a domain lands in one split and the model learns nothing about
+that domain. Give each branch, or each indoor rig setup, its own name when recording.
 
 ## 3. Check the labels on a contact sheet
 

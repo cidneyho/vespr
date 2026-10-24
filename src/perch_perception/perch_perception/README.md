@@ -218,10 +218,11 @@ python -m perch_perception.data_collection.record --domain indoor|outdoor [--out
 ```
 
 A camera loop plus a small web server. Open `http://localhost:8080` to get a live view of the
-left IR image and a Record / Stop button. Run it on the Jetson and reach the page through an SSH
+left IR image, a Record / Stop button, fields for the clip's site, branch, light and notes, and a
+button to mark the last clip bad. Run it on the Jetson and reach the page through an SSH
 tunnel (see "Recording clips" in the package README). Do not run it on John's Mac, which
-kernel-panicked twice while it streamed. At startup it prints the computer's clock, which names
-the clips.
+kernel-panicked twice while it streamed. At startup it prints the computer's clock, which goes
+into the clip names.
 
 ### Sessions
 
@@ -237,18 +238,56 @@ clip ends, for whatever reason, the recorder goes back to preview.
 
 ### What one clip produces
 
-Files are named by the clip's start time, for example `2026-10-10T14-32-05`. Colons are left out
-so the name is valid on every file system. If the folder already has a clip by that name, as
-when a Jetson without internet has the wrong time, `free_clip_name` adds `-2`, `-3` and so on,
-so an earlier `.bag` is never written over.
+Files are named by the clip's number and start time, for example `0042_2026-10-23T14-02-11`.
+The number is padded to 4 digits so clips sort by it, and colons are left out of the time so the
+name is valid on every file system. If the folder already has a clip by that name,
+`free_clip_name` adds `-2`, `-3` and so on, so an earlier `.bag` is never written over.
+
+**Clip numbers** come from one counter file, `~/vespr_recordings/next_clip_id`, next to the two
+domain folders, so indoor and outdoor clips share one count. The file holds the next number;
+`take_clip_number` reads it and writes the one after it, flushed to the disk before it is swapped
+in, so a pulled battery never leaves it half written. The number is taken when Record is
+pressed, so a recording that fails to start leaves a gap, and a number is never handed out
+twice, even after `clip_storage cleanup` deletes its clip. That is why the count is kept in a
+file and not worked out from the folder. Without the file the count starts at 1. If the Jetson
+is reinstalled, write a number higher than every clip on the Drive into the file before
+recording; the start time in the name keeps names unique even if you forget. A file holding
+anything but a whole number from 1 stops each recording with an error on the page, and changes
+nothing.
 
 | File | Contents |
 |---|---|
 | `<name>.bag` | Raw 16-bit depth and the left IR image at the session's frame rate, written by librealsense, with per-frame timestamps and the camera's calibration. This is the data. About 12 MB per second at 848x480 and 10 fps. |
 | `<name>.mp4` | Every recorded IR frame as grayscale video, for watching only. It is H.264 (`avc1`), or MPEG-4 (`mp4v`) where OpenCV cannot encode H.264. It is lossy: never use it for training or measurement. |
+| `<name>.json` | The clip's details, below. Written when the camera starts recording and again when the clip ends. |
 
-The recorder does **not** record the IMU, write a sidecar JSON with camera and scene details,
-or refuse to record over USB 2. Clips made with it so far are practice clips.
+The details file:
+
+| Key | Value |
+|---|---|
+| `clip`, `number` | The clip's name and number |
+| `domain` | `indoor` or `outdoor`, from `--domain` |
+| `started` | The start time from the computer's clock, for example `2026-10-23T14:02:11`. Wrong if the Jetson's clock was not set. |
+| `seconds` | How long the clip is |
+| `site`, `branch`, `light`, `notes` | What was in the page's fields when Record was pressed. Spaces at the ends are trimmed. |
+| `bad` | `true` if the clip was marked bad |
+| `error` | Only present when the camera failed during the clip: the error |
+
+The fields carry over from clip to clip, so they are typed once per branch. `extract_frames`
+uses `site` and `branch` to keep every clip of a branch in one split (see the training README),
+so type a new branch name for each branch.
+
+**Marking a clip bad.** Between clips, the page shows "Mark #0042 bad" for the last clip. It sets
+`bad` to `true` in the clip's `.json` and deletes nothing, so a clip marked by mistake is not
+lost: press the button again ("Unmark #0042 bad"), or edit the `.json` later. `extract_frames`
+skips clips marked bad. A clip that ends because the camera failed is marked bad by itself,
+because a clip cut short may not replay to the end. Only the last clip of the running recorder
+can be marked from the page; mark older clips by editing their `.json`. Mark a clip before it is
+uploaded: marking changes the `.json`'s size, so for a clip already on the Drive, `clip_storage
+upload` reports a conflict and leaves the Drive's old copy; replace that one by hand.
+
+The recorder does **not** record the IMU, save camera details (emitter state, exposure) in the
+`.json`, or refuse to record over USB 2.
 
 ### Where clips go
 
@@ -267,7 +306,7 @@ What the page shows comes from `Recorder.status()`:
 |---|---|---|
 | `preview` | Camera streaming, not recording | Record |
 | `starting` | Record pressed, camera restarting to record | disabled |
-| `recording` | Clip being recorded. The page shows its name and running time, and the image gets a red border. | Stop |
+| `recording` | Clip being recorded. The page shows its number and running time, and the image gets a red border. | Stop |
 | `stopping` | Stop pressed, clip being finished | disabled |
 
 If the camera fails to open, or fails part-way through, the error is shown on the page, any
@@ -282,10 +321,13 @@ tunnel.
 | Request | Response |
 |---|---|
 | `GET /` | The page |
-| `GET /status` | JSON: `state`, `clip`, `seconds`, `last_clip`, `error`, `folder` |
+| `GET /status` | JSON: `state`, `clip`, `seconds`, `last_clip`, `last_bad`, `details` (the fields kept for the next clip), `error`, `folder` |
 | `GET /stream` | The live view as MJPEG: one HTTP response that never ends, carrying one JPEG after another |
-| `POST /start` | Ask for a recording; replies with the status |
+| `POST /start` | Ask for a recording; replies with the status. A JSON body of fields, such as `{"site": "park", "branch": "7"}`, replaces the kept fields (a missing field becomes empty); no body keeps them. An unknown field, or one that is not text, gets `400` and starts nothing. |
 | `POST /stop` | Ask for the recording to end; replies with the status |
+| `POST /bad` | `{"bad": true}` or `{"bad": false}`: mark the last clip bad or not; replies with the status. `409` before any clip, `400` for any other body. |
+
+Refusals reply with `{"error": "..."}`, and the page shows the message under the buttons.
 
 The page asks for `/status` twice a second and says "The recorder is not responding" if it gets
 no answer.
@@ -379,7 +421,8 @@ Unlike the rest of the package, it imports `pyrealsense2` directly and has no te
 
 ## Tests
 
-132 tests, run with `python -m pytest` from the package folder. All pass on the Mac and on the
+157 tests outside `training/` (its README describes its own), run with `python -m pytest` from the
+package folder. All pass on the Mac and on the
 Jetson. None of them needs a camera
 or a network.
 
@@ -388,7 +431,7 @@ or a network.
 | `test_frame_source.py` | 6 | Depth scaling, zero kept as unknown, `float32`, the `Frame` unpacks in the agreed order, iteration and `with` blocks |
 | `test_realsense_source.py` | 12 | `BagSource` end to end on a synthetic bag: every frame once (the buffer copy), depth in meters, zeros kept, the image is left IR, timestamps in seconds, recorded intrinsics, no IMU, missing file. Also the USB frame rate choice and the macOS IMU refusal. |
 | `test_process_source.py` | 10 | Frames and images cross the process boundary, `fps` is passed back, open errors and open timeouts end the child, the source is closed before the child exits, Ctrl+C does not kill the child early, a frozen child is killed and reported, a dying child is reported |
-| `test_record.py` | 26 | Clip naming, a taken clip name getting `-2`, `--domain` and the folders, giving files back under `sudo`, preview and recording sessions, the preview video's frame count, status states, error handling, the camera loop following the button, and every web endpoint |
+| `test_record.py` | 51 | Clip numbers and names, the shared counter (never reused, a broken counter file refused), a taken clip name getting `-2`, `--domain` and the folders, giving files back under `sudo`, the details file and its fields, marking bad (by hand and after a camera error), preview and recording sessions, the preview video's frame count, status states, error handling, the camera loop following the button, and every web endpoint |
 | `test_run.py` | 9 | The depth summary ignores zeros, the summary line, frame counting and `--max-frames`, and replaying a synthetic bag through `main()` |
 | `test_clip_storage.py` | 60 | Clip grouping, still-being-written, copy and delete decisions, the rclone listing format, `upload`, `download`, `cleanup`, the command line, an unreadable clip, Ctrl+C, partial downloads and a login that expires mid-run, all with an in-memory rclone |
 | `test_clip_storage_rclone.py` | 4 | `upload`, `download` and `cleanup` with the real rclone between two local folders (skipped where rclone is missing) |
@@ -431,8 +474,8 @@ in-process close would also freeze there has not been tested.
 - Publishing anything from the ROS node. NAMING.md proposes `branch_pose` as a
   `geometry_msgs/msg/PoseStamped`, not a custom message type
 - A video-file-plus-intrinsics-JSON source
-- The recorder's sidecar JSON (camera details, scene metadata, emitter state, git commit), its
-  USB 2 refusal, and IMU recording
+- Camera details in the recorder's `.json` (emitter state, exposure, git commit), its USB 2
+  refusal, and IMU recording
 - Depth preset selection (the camera runs its default preset)
 - A comparison clip at 1280x720 on USB 3, against today's 848x480
 - IMU to image timestamp alignment

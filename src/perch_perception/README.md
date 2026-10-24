@@ -133,20 +133,37 @@ get its terminal back. Press Ctrl+C there to quit the recorder.
 ### What a clip is
 
 `--domain` picks the folder, `~/vespr_recordings/indoor` or `~/vespr_recordings/outdoor`, the
-same folders `clip_storage` uploads from. `--out` picks another folder. Each clip is two files
-named by its start time, for example `2026-10-10T14-32-05`:
+same folders `clip_storage` uploads from. `--out` picks another folder. Each clip is three files
+named by its number and start time, for example `0042_2026-10-23T14-02-11`:
 
 | File | What it is |
 |---|---|
 | `.bag` | Raw depth and left IR. This is the data, and `run.py --bag` replays it. |
 | `.mp4` | A small grayscale video for watching the clip. Lossy: never use it for training or measurement. |
+| `.json` | The clip's details: its number, domain, start time and length, the page's fields, and whether it is marked bad |
 
-The names come from the Jetson's clock, and without internet the Jetson cannot set it. Until it
-reaches the internet, its clock starts at the date its system image was built (June 5, 2026 on
-ours), so outdoor clips would be named June 5. So outdoors, copy the Mac's clock to it first
-(see Starting a session). The
-recorder also prints the clock's time when it starts, so check it then. A clip never replaces an
-earlier one: if the name is taken, the new clip gets `-2`, `-3` and so on.
+**The clip number is what you write down.** It goes up by one each time Record is pressed and is
+never reused, across indoor and outdoor, and the page shows it large: "Recording #0042" while
+recording and "Last clip: #0042" after. The count is kept on the Jetson in
+`~/vespr_recordings/next_clip_id`.
+
+**Fill in the fields before each branch.** Site, branch, light and notes go into the clip's
+`.json` and carry over to the next clip, so type them once per branch and change them when you
+move on. Give every branch its own name within a site (`7`, `8`, `big oak`...): the training
+pipeline keeps every clip of a branch in the same split, so clips with the same site and branch
+count as one branch. Indoors, with one rig branch, name each setup (`rig-pos1`, `rig-pos2`),
+or every indoor clip ends up in one split.
+
+**A take went wrong?** Press "Mark #0042 bad" before the next Record. Nothing is deleted: the clip
+still uploads, and the training pipeline skips it. Press it again to unmark. A clip the camera
+cut short is marked bad by itself.
+
+The start time comes from the Jetson's clock, and without internet the Jetson cannot set it.
+Until it reaches the internet, its clock starts at the date its system image was built (June 5,
+2026 on ours). So outdoors, copy the Mac's clock to it first (see Starting a session). The
+recorder also prints the clock's time when it starts, so check it then. The number keeps names
+unique even when the clock is wrong. A clip never replaces an earlier one: if the name is taken,
+the new clip gets `-2`, `-3` and so on.
 
 The folders are in the home folder on purpose: macOS can sync Desktop and Documents to iCloud
 Drive, and clips are large.
