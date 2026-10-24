@@ -8,10 +8,15 @@ infrared image. Clips already extracted are skipped, so the same folder can be r
 clips arrive. At the end, the frames not yet in a batch are zipped into to_label/batch_<nnn>.zip,
 ready to upload to the labeling tool.
 
+The recorder saves a .json next to each .bag. A clip it marks bad is not extracted, and the
+branch it names (its site and branch fields) goes into clips.csv, so every clip of a branch
+gets the same split.
+
 pyrealsense2 is imported only when a real .bag is opened, so this module imports without it.
 """
 
 import argparse
+import json
 import sys
 import zipfile
 from dataclasses import dataclass, replace
@@ -29,6 +34,8 @@ from perch_perception.training.dataset import (
     check_splits,
     file_md5,
     frame_id,
+    group_split,
+    split_group,
 )
 
 
@@ -40,6 +47,8 @@ class ExtractSummary:
     skipped: list  # clip names already in the dataset
     frames: int  # frames written this run
     batches: list  # paths of the batch zips written this run
+    bad: list  # clip names marked bad in their .json, so not extracted
+    bad_extracted: list  # clip names marked bad, but extracted before they were marked
 
 
 def open_bag_source(path):
@@ -48,6 +57,45 @@ def open_bag_source(path):
     from perch_perception.realsense_source import BagSource
 
     return BagSource(path)
+
+
+def read_details(bag_path):
+    """Return the details the recorder saved for a clip, from <clip>.json beside its .bag.
+
+    A clip recorded before the recorder wrote details has no .json, and gets {}. Raises
+    DatasetError naming the file if it is not a JSON object, if bad is not true or false, or if
+    domain, site or branch is not text.
+    """
+    path = bag_path.with_suffix('.json')
+    if not path.exists():
+        return {}
+    try:
+        details = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError) as error:  # a JSON syntax error is a ValueError
+        raise DatasetError(f'{path} cannot be read: {error}') from None
+    if not isinstance(details, dict):
+        raise DatasetError(f'{path} must hold a JSON object, the clip\'s details')
+    if not isinstance(details.get('bad', False), bool):
+        raise DatasetError(f'{path}: bad must be true or false')
+    for field in ('domain', 'site', 'branch'):
+        value = details.get(field)
+        if value is not None and not isinstance(value, str):
+            raise DatasetError(f'{path}: {field} must be text')
+    return details
+
+
+def branch_group(details):
+    """Return the branch a clip shows, as clips.csv stores it: 'site/branch', or '' for none.
+
+    Without a site it is the branch alone, and without a branch it is '' whatever the site,
+    because a site holds many branches. Spaces are trimmed and squeezed and letters made lower
+    case, so 'Park ' typed once and 'park' typed later are the same branch.
+    """
+    site, branch = (' '.join((details.get(field) or '').split()).lower()
+                    for field in ('site', 'branch'))
+    if not branch:
+        return ''
+    return f'{site}/{branch}' if site else branch
 
 
 def extract_clip(dataset, frames, clip, domain, every):
@@ -110,9 +158,11 @@ def pack_batches(dataset, batch_size=100):
 def extract_folder(dataset, folder, domain, every=10, hold=(), batch_size=100, open_bag=None):
     """Extract every new .bag clip in a folder, then pack the new frames into batches.
 
-    The clip name is the .bag file's name without .bag. A clip already in clips.csv with the
-    same MD5 is skipped; one with the same name but a different MD5 is refused. Clips named in
-    hold are written to splits.csv as hold; each must be a new clip in the folder.
+    The clip name is the .bag file's name without .bag. A clip marked bad in its .json is
+    skipped. A clip already in clips.csv with the same MD5 is skipped; one with the same name but
+    a different MD5 is refused, and so is one whose .json names the other domain. Clips named in
+    hold are written to splits.csv as hold; each must be a new clip in the folder, not marked
+    bad, and its branch must have no other split already.
 
     Every check runs before anything is extracted. Then each clip's rows are written only after
     the clip has been read to the end, so a clip that fails partway leaves no rows and the next
@@ -134,11 +184,23 @@ def extract_folder(dataset, folder, domain, every=10, hold=(), batch_size=100, o
     known = {row.clip: row for row in dataset.read_clips()}
     new_clips = []  # (clip, path, ClipRow) for each clip to extract
     skipped = []
+    bad = []
+    bad_extracted = []
     for path in sorted(folder.glob('*.bag')):
         clip = path.stem
+        details = read_details(path)
+        if details.get('bad', False):
+            (bad_extracted if clip in known else bad).append(clip)
+            continue
+        recorded_domain = details.get('domain')
+        if recorded_domain is not None and recorded_domain != domain:
+            raise DatasetError(
+                f'{path.name} was recorded as {recorded_domain}, its .json says, but --domain '
+                f'is {domain}. Extract it from the folder of its own domain.')
         md5 = file_md5(path)
         if clip not in known:
-            new_clips.append((clip, path, ClipRow(clip, domain, path.stat().st_size, md5)))
+            new_clips.append((clip, path, ClipRow(clip, domain, path.stat().st_size, md5,
+                                                  branch_group(details))))
         elif known[clip].md5 == md5:
             skipped.append(clip)
         else:
@@ -148,12 +210,26 @@ def extract_folder(dataset, folder, domain, every=10, hold=(), batch_size=100, o
 
     new_names = [clip for clip, _, _ in new_clips]
     for clip in hold:
+        if clip in bad or clip in bad_extracted:
+            raise DatasetError(f'--hold names clip {clip}, but it is marked bad in its .json, '
+                               'so it is not extracted')
         if clip in skipped:
             raise DatasetError(
                 f'clip {clip} was already extracted, so --hold cannot mark it. '
                 'Add or change its row in splits.csv by hand instead.')
         if clip not in new_names:
             raise DatasetError(f'--hold names clip {clip}, but there is no {clip}.bag in {folder}')
+    # A held clip's branch must not have clips in another split already: hold every clip of a
+    # branch, or none. Its new clips join hold when their labels are imported.
+    splits = dataset.read_splits()
+    all_clips = {**known, **{clip: row for clip, _, row in new_clips}}
+    for clip in hold:
+        existing = group_split(clip, splits, all_clips)
+        if existing not in (None, 'hold'):
+            raise DatasetError(
+                f'--hold names clip {clip} of branch {split_group(all_clips[clip])}, but other '
+                f'clips of that branch are already {existing}. Hold every clip of a branch or '
+                'none: change their rows in splits.csv by hand instead.')
 
     frame_count = 0
     for clip, path, clip_row in new_clips:
@@ -178,7 +254,7 @@ def extract_folder(dataset, folder, domain, every=10, hold=(), batch_size=100, o
         frame_count += len(rows)
 
     batches = pack_batches(dataset, batch_size)
-    return ExtractSummary(new_names, skipped, frame_count, batches)
+    return ExtractSummary(new_names, skipped, frame_count, batches, bad, bad_extracted)
 
 
 def parse_args(argv=None):
@@ -210,6 +286,11 @@ def main(argv=None):
     print(f'extracted {len(summary.extracted)} clips, {summary.frames} frames: '
           f'{", ".join(summary.extracted) or "none"}')
     print(f'skipped {len(summary.skipped)} clips already extracted')
+    if summary.bad:
+        print(f'skipped {len(summary.bad)} clips marked bad: {", ".join(summary.bad)}')
+    for clip in summary.bad_extracted:
+        print(f'warning: {clip} is marked bad, but it was extracted before it was marked, so its '
+              'frames are still in the dataset. Nothing removes them by itself.')
     for path in summary.batches:
         print(f'to label: {path}')
     return 0

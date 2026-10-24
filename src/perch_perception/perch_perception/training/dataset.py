@@ -4,15 +4,16 @@ The dataset lives outside the repo, in ~/vespr_dataset by default, because recor
 goes into git:
 
     manifest.csv          one row per extracted frame (FrameRow)
-    clips.csv             one row per extracted clip (ClipRow)
+    clips.csv             one row per extracted clip (ClipRow), with the branch it shows
     splits.csv            one row per clip: clip, split (train, val, hold or test)
     images/<frame_id>.png left infrared image, 8-bit, lossless
     labels/<frame_id>.txt YOLO segmentation polygons; present only once labeled
     to_label/<batch>.zip  new, unlabeled frames packed for upload to the labeling tool
     runs/<run_name>/      one folder per training run, with its run.json
 
-Splits are by clip, never by frame, because neighbouring frames are near-copies. Clips that are
-held out (hold or test) must never have been used by a training run; check_splits enforces it.
+Splits are by clip, never by frame, because neighbouring frames are near-copies. Clips of the same
+branch are near-copies too, so every clip of a branch gets the same split. Clips that are held
+out (hold or test) must never have been used by a training run; check_splits enforces both.
 
 Plain Python, NumPy and PyYAML only, so this runs anywhere, without a camera or a GPU.
 """
@@ -33,6 +34,8 @@ HELD_OUT_SPLITS = ('hold', 'test')  # never trained on, tuned with or scored dur
 CLASS_NAMES = {0: 'branch'}
 DEFAULT_DATASET = Path('~/vespr_dataset')
 SPLITS_HEADER = ('clip', 'split')  # the columns of splits.csv
+# The columns clips.csv must have. group came later, so a clips.csv without it still reads.
+CLIPS_REQUIRED = ('clip', 'domain', 'size', 'md5')
 
 
 class DatasetError(Exception):
@@ -63,6 +66,7 @@ class ClipRow:
     domain: str
     size: int  # bytes of the .bag
     md5: str  # of the .bag, lowercase hex
+    group: str = ''  # the branch it shows, such as 'park/7', from its .json; '' for none
 
 
 def frame_id(clip, frame_index):
@@ -178,7 +182,8 @@ def _frame_row(row):
 
 def _clip_row(row):
     """Return one row of clips.csv, a dict keyed by column, as a ClipRow."""
-    return ClipRow(row['clip'], row['domain'], int(row['size']), row['md5'])
+    return ClipRow(row['clip'], row['domain'], int(row['size']), row['md5'],
+                   row.get('group') or '')
 
 
 class Dataset:
@@ -204,7 +209,7 @@ class Dataset:
 
     def read_clips(self):
         """Return every row of clips.csv as a ClipRow, in file order."""
-        return _read_rows(self._clips_csv, _header(ClipRow), _clip_row)
+        return _read_rows(self._clips_csv, CLIPS_REQUIRED, _clip_row)
 
     def write_clips(self, rows):
         """Replace clips.csv with these ClipRows."""
@@ -249,19 +254,47 @@ class Dataset:
         return self.label_path(frame_id).exists()
 
 
-def assign_split(clip, domain, splits, clip_domains):
-    """Return 'train' or 'val' for a clip that has no split yet.
+def split_group(row):
+    """Return what a clip shares its split with: its domain and branch, or the clip alone.
 
-    splits is {clip: split} for the clips that already have one, and clip_domains is
-    {clip: domain}. About 1 in 5 clips goes to val.
+    A ClipRow with no group is a group of one. The domain is part of it, so branch 1 indoors and
+    branch 1 outdoors are different branches.
     """
+    return f'{row.domain}/{row.group}' if row.group else row.clip
+
+
+def group_split(clip, splits, clips):
+    """Return the split another clip of the same group already has, or None.
+
+    splits is {clip: split} and clips is {clip: ClipRow}.
+    """
+    group = split_group(clips[clip])
+    for other, split in sorted(splits.items()):
+        if other != clip and other in clips and split_group(clips[other]) == group:
+            return split
+    return None
+
+
+def assign_split(clip, splits, clips):
+    """Return the split for a clip that has no split yet.
+
+    splits is {clip: split} for the clips that already have one, and clips is {clip: ClipRow}.
+    A clip joins the split of its branch's other clips, whatever it is, hold and test included.
+    A new branch, or a clip with no branch, gets train or val: about 1 in 5 goes to val.
+    """
+    existing = group_split(clip, splits, clips)
+    if existing is not None:
+        return existing
     # Val needs at least one clip per domain, or that domain cannot be scored.
-    domain_has_val = any(split == 'val' and clip_domains.get(c) == domain
+    domain = clips[clip].domain
+    domain_has_val = any(split == 'val' and c in clips and clips[c].domain == domain
                          for c, split in splits.items())
     if not domain_has_val:
         return 'val'
-    # Otherwise hash the name, so the answer never depends on the order clips arrive.
-    return 'val' if int(hashlib.md5(clip.encode()).hexdigest(), 16) % 5 == 0 else 'train'
+    # Otherwise hash the group, so the answer never depends on the order clips arrive, and
+    # every clip of a branch gets the same answer.
+    group = split_group(clips[clip])
+    return 'val' if int(hashlib.md5(group.encode()).hexdigest(), 16) % 5 == 0 else 'train'
 
 
 def run_files(dataset, run):
@@ -299,7 +332,9 @@ def check_splits(dataset):
     """Raise LeakageError if a clip marked hold or test has already been used by a run.
 
     This is the leakage guard. Once a run has trained or tuned on a clip, scoring that clip
-    later would report an optimistic, invalid result, so it can never be held out again.
+    later would report an optimistic, invalid result, so it can never be held out again. The
+    same goes for a branch: it raises DatasetError if the clips of one branch have different
+    splits, because training on one of them and scoring another is the same leak.
     """
     splits = dataset.read_splits()
     leaked = sorted(clip for clip in used_clips(dataset)
@@ -308,6 +343,17 @@ def check_splits(dataset):
         raise LeakageError(
             'these clips are marked hold or test in splits.csv, but a training run already used '
             f'them, so they can no longer be held out: {", ".join(leaked)}')
+
+    by_group = {}  # {group: {clip: split}} for the clips that have a split
+    for row in dataset.read_clips():
+        if row.clip in splits:
+            by_group.setdefault(split_group(row), {})[row.clip] = splits[row.clip]
+    for group, members in sorted(by_group.items()):
+        if len(set(members.values())) > 1:
+            listed = ', '.join(f'{clip}: {split}' for clip, split in sorted(members.items()))
+            raise DatasetError(
+                f'the clips of branch {group} have different splits in splits.csv ({listed}). '
+                'Clips of one branch are near-copies, so give them all the same split.')
 
 
 def labeled_frames(dataset, split, domain=None):

@@ -22,11 +22,14 @@ FRAMES = [frame_id(CLIP, 0), frame_id(CLIP, 10), frame_id(OTHER_CLIP, 0),
 POLYGON = '0 0.1 0.2 0.3 0.2 0.3 0.4\n'
 
 
-def make_dataset(root):
-    """A dataset with two indoor clips, both in clips.csv, and their four frames in batch_001."""
+def make_dataset(root, group='', other_group=''):
+    """A dataset with two indoor clips, both in clips.csv, and their four frames in batch_001.
+
+    group and other_group are the branches of CLIP and OTHER_CLIP; '' is none.
+    """
     dataset = Dataset(root)
-    dataset.write_clips([ClipRow(CLIP, 'indoor', 100, 'f' * 32),
-                         ClipRow(OTHER_CLIP, 'indoor', 100, 'e' * 32)])
+    dataset.write_clips([ClipRow(CLIP, 'indoor', 100, 'f' * 32, group),
+                         ClipRow(OTHER_CLIP, 'indoor', 100, 'e' * 32, other_group)])
     dataset.write_frames([
         FrameRow(frame_id(clip, index), clip, 'indoor', index, index / 30, 'batch_001')
         for clip in (CLIP, OTHER_CLIP) for index in (0, 10)])
@@ -234,6 +237,42 @@ def test_new_clips_get_train_or_val_and_held_clips_stay_held(tmp_path):
 
     assert summary.new_splits == {CLIP: 'val'}
     assert dataset.read_splits() == {CLIP: 'val', OTHER_CLIP: 'hold'}
+
+
+def test_a_new_clip_joins_the_split_of_its_branch_even_when_held(tmp_path):
+    dataset = make_dataset(tmp_path / 'dataset', group='lab/1', other_group='lab/1')
+    dataset.write_splits({OTHER_CLIP: 'hold'})
+
+    summary = import_batch(dataset, full_export(tmp_path / 'export.zip'))
+
+    assert summary.new_splits == {CLIP: 'hold'}
+
+
+def test_new_clips_of_one_branch_in_one_import_get_the_same_split(tmp_path):
+    dataset = make_dataset(tmp_path / 'dataset', group='lab/1', other_group='lab/1')
+
+    summary = import_batch(dataset, full_export(tmp_path / 'export.zip'))
+
+    # The first indoor clip goes to val, and its branch goes with it.
+    assert summary.new_splits == {CLIP: 'val', OTHER_CLIP: 'val'}
+
+
+def test_the_clips_of_each_split_are_counted_per_domain(tmp_path, capsys):
+    dataset = make_dataset(tmp_path / 'dataset')
+    dataset.write_splits({OTHER_CLIP: 'hold'})
+
+    main([str(full_export(tmp_path / 'export.zip')), '--dataset', str(dataset.root)])
+
+    assert 'indoor clips: 0 train, 1 val, 1 hold, 0 test' in capsys.readouterr().out
+
+
+def test_a_domain_with_no_train_clip_is_warned_about(tmp_path, capsys):
+    # One indoor branch means one indoor split: all val, so the model learns nothing indoors.
+    dataset = make_dataset(tmp_path / 'dataset', group='lab/1', other_group='lab/1')
+
+    main([str(full_export(tmp_path / 'export.zip')), '--dataset', str(dataset.root)])
+
+    assert 'warning: no indoor clip is in train' in capsys.readouterr().out
 
 
 def test_reimporting_a_batch_replaces_its_labels_and_says_so(tmp_path):

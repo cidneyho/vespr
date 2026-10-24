@@ -6,7 +6,9 @@ replays a real synthetic .bag.
 """
 
 import hashlib
+import json
 import zipfile
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -18,7 +20,7 @@ from fake_source import ListSource, make_frame  # noqa: E402
 from perch_perception.training.dataset import (  # noqa: E402
     ClipRow, Dataset, DatasetError, frame_id)
 from perch_perception.training.extract_frames import (  # noqa: E402
-    extract_clip, extract_folder, pack_batches)
+    extract_clip, extract_folder, main, pack_batches)
 
 
 def numbered_frames(count):
@@ -32,6 +34,13 @@ def write_bag(folder, clip, content=None):
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f'{clip}.bag'
     path.write_bytes(content if content is not None else f'recording {clip}'.encode())
+    return path
+
+
+def write_details(folder, clip, **details):
+    """Write the .json the recorder saves next to a clip's .bag."""
+    path = folder / f'{clip}.json'
+    path.write_text(json.dumps({'clip': clip, 'bad': False, **details}))
     return path
 
 
@@ -157,6 +166,140 @@ def test_holding_a_clip_that_was_already_extracted_is_an_error(tmp_path):
     assert [row.clip for row in dataset.read_clips()] == ['a']
 
 
+def test_a_clip_marked_bad_is_not_extracted(tmp_path):
+    dataset = Dataset(tmp_path / 'dataset')
+    folder = tmp_path / 'bags'
+    write_bag(folder, 'a')
+    write_bag(folder, 'b')
+    write_details(folder, 'a', bad=True)
+
+    summary = extract_folder(dataset, folder, 'outdoor',
+                             open_bag=open_fake_bags({'a': 25, 'b': 25}))
+
+    assert summary.bad == ['a']
+    assert summary.extracted == ['b']
+    assert [row.clip for row in dataset.read_clips()] == ['b']
+    assert {row.clip for row in dataset.read_frames()} == {'b'}
+
+
+def test_a_clip_marked_bad_after_it_was_extracted_is_reported_and_kept(tmp_path):
+    dataset = Dataset(tmp_path / 'dataset')
+    folder = tmp_path / 'bags'
+    open_bag = open_fake_bags({'a': 25})
+    write_bag(folder, 'a')
+    extract_folder(dataset, folder, 'outdoor', open_bag=open_bag)
+    write_details(folder, 'a', bad=True)
+
+    summary = extract_folder(dataset, folder, 'outdoor', open_bag=open_bag)
+
+    assert summary.bad_extracted == ['a']
+    assert [row.clip for row in dataset.read_clips()] == ['a']
+
+
+def test_bad_clips_are_listed_by_main(tmp_path, capsys, monkeypatch):
+    folder = tmp_path / 'bags'
+    write_bag(folder, 'a')
+    write_details(folder, 'a', bad=True)
+
+    main([str(folder), '--domain', 'outdoor', '--dataset', str(tmp_path / 'dataset')])
+
+    assert 'skipped 1 clips marked bad: a' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('site, branch, group', [
+    (' Big  Oak ', '7', 'big oak/7'),  # trimmed, spaces squeezed, lower case
+    ('', 'B7', 'b7'),
+    ('park', '', ''),  # a site alone names no branch
+])
+def test_the_branch_in_the_details_goes_into_clips_csv(tmp_path, site, branch, group):
+    dataset = Dataset(tmp_path / 'dataset')
+    folder = tmp_path / 'bags'
+    write_bag(folder, 'a')
+    write_details(folder, 'a', domain='outdoor', site=site, branch=branch)
+
+    extract_folder(dataset, folder, 'outdoor', open_bag=open_fake_bags({'a': 25}))
+
+    assert dataset.read_clips()[0].group == group
+
+
+def test_a_clip_without_details_has_no_branch(tmp_path):
+    # Clips recorded before the recorder wrote a .json have only the .bag and .mp4.
+    dataset = Dataset(tmp_path / 'dataset')
+    write_bag(tmp_path / 'bags', 'a')
+
+    extract_folder(dataset, tmp_path / 'bags', 'outdoor', open_bag=open_fake_bags({'a': 25}))
+
+    assert dataset.read_clips()[0].group == ''
+
+
+@pytest.mark.parametrize('text', ['{"bad": tru', '["not", "an", "object"]', '{"bad": "yes"}',
+                                  '{"branch": 7}'])
+def test_a_details_file_that_cannot_be_read_is_an_error_naming_it(tmp_path, text):
+    dataset = Dataset(tmp_path / 'dataset')
+    folder = tmp_path / 'bags'
+    write_bag(folder, 'a')
+    (folder / 'a.json').write_text(text)
+
+    with pytest.raises(DatasetError, match='a.json'):
+        extract_folder(dataset, folder, 'outdoor', open_bag=open_fake_bags({'a': 25}))
+
+    assert dataset.read_clips() == []
+
+
+def test_a_clip_recorded_for_the_other_domain_is_refused(tmp_path):
+    dataset = Dataset(tmp_path / 'dataset')
+    folder = tmp_path / 'bags'
+    write_bag(folder, 'a')
+    write_details(folder, 'a', domain='indoor')
+
+    with pytest.raises(DatasetError, match='indoor'):
+        extract_folder(dataset, folder, 'outdoor', open_bag=open_fake_bags({'a': 25}))
+
+    assert dataset.read_clips() == []
+
+
+def test_holding_a_clip_marked_bad_is_an_error(tmp_path):
+    dataset = Dataset(tmp_path / 'dataset')
+    folder = tmp_path / 'bags'
+    write_bag(folder, 'a')
+    write_details(folder, 'a', bad=True)
+
+    with pytest.raises(DatasetError, match='marked bad'):
+        extract_folder(dataset, folder, 'outdoor', hold=['a'],
+                       open_bag=open_fake_bags({'a': 25}))
+
+
+def test_holding_a_clip_whose_branch_already_has_another_split_is_an_error(tmp_path):
+    dataset = Dataset(tmp_path / 'dataset')
+    folder = tmp_path / 'bags'
+    open_bag = open_fake_bags({'a': 25, 'b': 25})
+    write_bag(folder, 'a')
+    write_details(folder, 'a', site='park', branch='7')
+    extract_folder(dataset, folder, 'outdoor', open_bag=open_bag)
+    dataset.write_splits({'a': 'train'})  # as an import would, once a is labeled
+    write_bag(folder, 'b')
+    write_details(folder, 'b', site='park', branch='7')
+
+    with pytest.raises(DatasetError, match='park/7'):
+        extract_folder(dataset, folder, 'outdoor', hold=['b'], open_bag=open_bag)
+
+    assert [row.clip for row in dataset.read_clips()] == ['a']
+
+
+def test_holding_one_clip_of_a_new_branch_is_allowed(tmp_path):
+    # The branch's other clips join hold when their labels are imported.
+    dataset = Dataset(tmp_path / 'dataset')
+    folder = tmp_path / 'bags'
+    for clip in ('a', 'b'):
+        write_bag(folder, clip)
+        write_details(folder, clip, site='park', branch='7')
+
+    extract_folder(dataset, folder, 'outdoor', hold=['a'],
+                   open_bag=open_fake_bags({'a': 25, 'b': 25}))
+
+    assert dataset.read_splits() == {'a': 'hold'}
+
+
 def test_a_bag_that_fails_partway_leaves_earlier_clips_and_no_rows_for_itself(tmp_path):
     dataset = Dataset(tmp_path / 'dataset')
     folder = tmp_path / 'bags'
@@ -232,3 +375,34 @@ def test_extracting_the_synthetic_bag_end_to_end(tmp_path):
     assert image.shape == (synthetic_bag.HEIGHT, synthetic_bag.WIDTH)
     assert (image == 10).all()
     assert summary.batches == [dataset.to_label_dir / 'batch_001.zip']
+
+
+def test_the_details_the_recorder_writes_are_read_by_extraction(tmp_path):
+    # Pins the .json format the two sides share: the recorder writes it, extraction reads it.
+    from datetime import datetime
+
+    from perch_perception.data_collection import record
+
+    class Camera(ListSource):
+        fps = 10
+
+    def open_camera(record_to):
+        if record_to is not None:
+            write_bag(tmp_path / 'bags', Path(record_to).stem)  # stands in for librealsense
+        return Camera([make_frame(0.0, shape=(48, 64))])
+
+    folder = tmp_path / 'bags'
+    recorder = record.Recorder(open_camera, folder, tmp_path / 'next_clip_id',
+                               clock=lambda: datetime(2026, 10, 23, 14, 2, 11), domain='outdoor')
+    for branch in ('7', '8'):
+        recorder.start({'site': 'Park', 'branch': branch})
+        recorder.run_session()
+    recorder.mark_last_clip_bad(True)
+    dataset = Dataset(tmp_path / 'dataset')
+
+    summary = extract_folder(dataset, folder, 'outdoor',
+                             open_bag=lambda path: ListSource(numbered_frames(25)))
+
+    assert summary.extracted == ['0001_2026-10-23T14-02-11']
+    assert summary.bad == ['0002_2026-10-23T14-02-11']
+    assert dataset.read_clips()[0].group == 'park/7'

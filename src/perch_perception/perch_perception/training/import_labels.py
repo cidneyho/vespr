@@ -20,6 +20,8 @@ from pathlib import Path, PurePosixPath
 
 from perch_perception.training.dataset import (
     DEFAULT_DATASET,
+    DOMAINS,
+    SPLITS,
     Dataset,
     DatasetError,
     assign_split,
@@ -173,20 +175,20 @@ def import_batch(dataset, export):
     # cannot be given one: splits.csv may only name clips that are in clips.csv. A clip is
     # labeled once any of its frames has a label file, from this import or an earlier one.
     # Clips are taken in manifest order, so which clip is a domain's first val clip does not
-    # depend on dict order.
+    # depend on dict order. A clip whose branch already has a split joins it.
     splits = dataset.read_splits()
-    clip_domains = {row.clip: row.domain for row in dataset.read_clips()}
+    clips = {row.clip: row for row in dataset.read_clips()}
     new_splits = {}
     for row in frames:
         labeled = row.frame_id in labels or dataset.is_labeled(row.frame_id)
         if row.clip in splits or not labeled:
             continue
-        if row.clip not in clip_domains:
+        if row.clip not in clips:
             raise DatasetError(
                 f'clip {row.clip} is not in clips.csv, though manifest.csv has frames of it, '
                 'probably because its extraction stopped partway. Remove its rows from '
                 'manifest.csv and extract it again.')
-        split = assign_split(row.clip, clip_domains[row.clip], splits, clip_domains)
+        split = assign_split(row.clip, splits, clips)
         splits[row.clip] = split
         new_splits[row.clip] = split
 
@@ -201,6 +203,16 @@ def import_batch(dataset, export):
     check_splits(dataset)
 
     return ImportSummary(batch, len(labels), empty, replaced, new_splits)
+
+
+def split_counts(dataset):
+    """Return {domain: {split: number of clips}} for the clips that have a split."""
+    counts = {domain: dict.fromkeys(SPLITS, 0) for domain in DOMAINS}
+    splits = dataset.read_splits()
+    for row in dataset.read_clips():
+        if row.clip in splits:
+            counts[row.domain][splits[row.clip]] += 1
+    return counts
 
 
 def parse_args(argv=None):
@@ -226,6 +238,14 @@ def main(argv=None):
     print(f'{summary.empty} of {summary.labels} frames came back with no branch')
     for clip, split in summary.new_splits.items():
         print(f'new clip {clip}: {split}')
+    for domain, counts in split_counts(dataset).items():
+        if not any(counts.values()):
+            continue
+        print(f'{domain} clips: ' + ', '.join(f'{counts[split]} {split}' for split in SPLITS))
+        # A domain whose clips all share one branch, or one split, teaches the model nothing.
+        if counts['train'] == 0:
+            print(f'warning: no {domain} clip is in train, so the model learns nothing about '
+                  f'{domain} scenes. Record more {domain} branches, each with its own name.')
     return 0
 
 

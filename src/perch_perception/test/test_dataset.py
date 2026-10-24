@@ -29,10 +29,14 @@ CLIP = '2026-10-19_14-03-22'
 OTHER_CLIP = '2026-10-19_15-10-05'
 
 
-def make_dataset(root, clips):
-    """Write clips.csv and splits.csv for clips given as {clip: (domain, split)}."""
+def make_dataset(root, clips, groups=None):
+    """Write clips.csv and splits.csv for clips given as {clip: (domain, split)}.
+
+    groups, {clip: group}, gives clips a branch; the others have none.
+    """
+    groups = groups or {}
     dataset = Dataset(root)
-    dataset.write_clips([ClipRow(clip, domain, 100, 'f' * 32)
+    dataset.write_clips([ClipRow(clip, domain, 100, 'f' * 32, groups.get(clip, ''))
                          for clip, (domain, _) in clips.items()])
     dataset.write_splits({clip: split for clip, (_, split) in clips.items()})
     return dataset
@@ -67,7 +71,8 @@ def test_csv_files_round_trip(tmp_path):
         FrameRow(frame_id(CLIP, 0), CLIP, 'indoor', 0, 0.0, 'batch_001'),
         FrameRow(frame_id(CLIP, 10), CLIP, 'indoor', 10, 0.1 + 0.2, ''),
     ]
-    clips = [ClipRow(CLIP, 'indoor', 123456789, '0123456789abcdef0123456789abcdef')]
+    clips = [ClipRow(CLIP, 'indoor', 123456789, '0123456789abcdef0123456789abcdef', 'park/7'),
+             ClipRow(OTHER_CLIP, 'indoor', 5, 'f' * 32)]
     splits = {CLIP: 'hold'}
 
     dataset.write_frames(frames)
@@ -77,6 +82,12 @@ def test_csv_files_round_trip(tmp_path):
     assert dataset.read_frames() == frames
     assert dataset.read_clips() == clips
     assert dataset.read_splits() == splits
+
+
+def test_a_clips_csv_from_before_branches_reads_as_clips_without_a_branch(tmp_path):
+    (tmp_path / 'clips.csv').write_text(f'clip,domain,size,md5\n{CLIP},indoor,100,{"f" * 32}\n')
+
+    assert Dataset(tmp_path).read_clips() == [ClipRow(CLIP, 'indoor', 100, 'f' * 32, '')]
 
 
 def test_a_missing_csv_reads_as_empty(tmp_path):
@@ -175,17 +186,22 @@ def test_parse_label_rejects_a_bad_line(line):
         parse_label(line)
 
 
+def clip_rows(*rows):
+    """Return {clip: ClipRow} for rows given as (clip, domain) or (clip, domain, group)."""
+    return {row[0]: ClipRow(row[0], row[1], 100, 'f' * 32, *row[2:]) for row in rows}
+
+
 def test_the_first_clip_of_a_domain_goes_to_val():
-    assert assign_split('a', 'indoor', {}, {}) == 'val'
+    assert assign_split('a', {}, clip_rows(('a', 'indoor'))) == 'val'
 
 
 def test_later_clips_are_split_by_a_hash_of_the_name():
-    splits = {'v': 'val'}
-    clip_domains = {'v': 'indoor'}
     names = [f'2026-10-19_14-{i // 60:02d}-{i % 60:02d}' for i in range(200)]
+    clips = clip_rows(('v', 'indoor'), *[(name, 'indoor') for name in names])
+    splits = {'v': 'val'}
 
-    first = [assign_split(name, 'indoor', splits, clip_domains) for name in names]
-    second = [assign_split(name, 'indoor', splits, clip_domains) for name in names]
+    first = [assign_split(name, splits, clips) for name in names]
+    second = [assign_split(name, splits, clips) for name in names]
 
     assert first == second
     assert set(first) == {'train', 'val'}
@@ -193,11 +209,43 @@ def test_later_clips_are_split_by_a_hash_of_the_name():
 
 
 def test_hold_clips_do_not_count_as_a_domains_val_clip():
-    assert assign_split('b', 'indoor', {'a': 'hold'}, {'a': 'indoor'}) == 'val'
+    clips = clip_rows(('a', 'indoor'), ('b', 'indoor'))
+
+    assert assign_split('b', {'a': 'hold'}, clips) == 'val'
 
 
 def test_a_val_clip_of_another_domain_does_not_count():
-    assert assign_split('b', 'outdoor', {'a': 'val'}, {'a': 'indoor'}) == 'val'
+    clips = clip_rows(('a', 'indoor'), ('b', 'outdoor'))
+
+    assert assign_split('b', {'a': 'val'}, clips) == 'val'
+
+
+@pytest.mark.parametrize('split', ['train', 'val', 'hold', 'test'])
+def test_a_clip_joins_the_split_its_branch_already_has(split):
+    # Clips of one branch are near-copies, like frames of one clip, so they share a split. Here
+    # the domain has no val clip, so without the branch b would go to val.
+    clips = clip_rows(('a', 'indoor', 'lab/1'), ('b', 'indoor', 'lab/1'))
+
+    assert assign_split('b', {'a': split}, clips) == split
+
+
+def test_the_same_branch_name_in_the_other_domain_is_another_branch():
+    clips = clip_rows(('a', 'outdoor', '1'), ('b', 'indoor', '1'))
+
+    assert assign_split('b', {'a': 'train'}, clips) == 'val'
+
+
+def test_the_clips_of_a_new_branch_get_the_same_split_from_a_hash_of_the_branch():
+    groups = [f'park/{i}' for i in range(100)]
+    clips = clip_rows(('v', 'outdoor'),
+                      *[(f'{group}-{take}', 'outdoor', group) for group in groups
+                        for take in (1, 2)])
+
+    first = [assign_split(f'{group}-1', {'v': 'val'}, clips) for group in groups]
+    second = [assign_split(f'{group}-2', {'v': 'val'}, clips) for group in groups]
+
+    assert first == second
+    assert set(first) == {'train', 'val'}
 
 
 @pytest.mark.parametrize('split', ['Val', 'holdout', ''])
@@ -248,6 +296,25 @@ def test_every_leaked_clip_is_named(tmp_path):
 def test_clips_no_run_has_used_can_be_held(tmp_path):
     dataset = make_dataset(tmp_path, {CLIP: ('indoor', 'train'), OTHER_CLIP: ('indoor', 'hold')})
     write_run(dataset, 'r1', train=[CLIP], val=[])
+
+    assert check_splits(dataset) is None
+
+
+def test_clips_of_one_branch_in_different_splits_are_an_error(tmp_path):
+    dataset = make_dataset(tmp_path, {CLIP: ('outdoor', 'train'), OTHER_CLIP: ('outdoor', 'hold')},
+                           groups={CLIP: 'park/7', OTHER_CLIP: 'park/7'})
+
+    with pytest.raises(DatasetError) as error:
+        check_splits(dataset)
+
+    message = str(error.value)
+    assert 'park/7' in message and CLIP in message and OTHER_CLIP in message
+
+
+def test_clips_of_different_branches_or_no_branch_may_be_in_different_splits(tmp_path):
+    clips = {'a': ('outdoor', 'train'), 'b': ('outdoor', 'hold'), 'c': ('outdoor', 'val'),
+             'd': ('outdoor', 'train'), 'e': ('indoor', 'val')}
+    dataset = make_dataset(tmp_path, clips, groups={'a': 'park/7', 'b': 'park/8', 'e': 'park/7'})
 
     assert check_splits(dataset) is None
 
