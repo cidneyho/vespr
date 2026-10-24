@@ -71,7 +71,8 @@ def test_csv_files_round_trip(tmp_path):
         FrameRow(frame_id(CLIP, 0), CLIP, 'indoor', 0, 0.0, 'batch_001'),
         FrameRow(frame_id(CLIP, 10), CLIP, 'indoor', 10, 0.1 + 0.2, ''),
     ]
-    clips = [ClipRow(CLIP, 'indoor', 123456789, '0123456789abcdef0123456789abcdef', 'park/7'),
+    clips = [ClipRow(CLIP, 'indoor', 123456789, '0123456789abcdef0123456789abcdef', 'park/7',
+                     '0-12.5'),
              ClipRow(OTHER_CLIP, 'indoor', 5, 'f' * 32)]
     splits = {CLIP: 'hold'}
 
@@ -87,7 +88,7 @@ def test_csv_files_round_trip(tmp_path):
 def test_a_clips_csv_from_before_branches_reads_as_clips_without_a_branch(tmp_path):
     (tmp_path / 'clips.csv').write_text(f'clip,domain,size,md5\n{CLIP},indoor,100,{"f" * 32}\n')
 
-    assert Dataset(tmp_path).read_clips() == [ClipRow(CLIP, 'indoor', 100, 'f' * 32, '')]
+    assert Dataset(tmp_path).read_clips() == [ClipRow(CLIP, 'indoor', 100, 'f' * 32, '', '')]
 
 
 def test_a_missing_csv_reads_as_empty(tmp_path):

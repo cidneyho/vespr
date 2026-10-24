@@ -10,13 +10,15 @@ ready to upload to the labeling tool.
 
 The recorder saves a .json next to each .bag. A clip it marks bad is not extracted, and the
 branch it names (its site and branch fields) goes into clips.csv, so every clip of a branch
-gets the same split.
+gets the same split. A clip trimmed with data_collection.trim has "keep": [start, end] in its
+.json, and only its frames in that range are extracted.
 
 pyrealsense2 is imported only when a real .bag is opened, so this module imports without it.
 """
 
 import argparse
 import json
+import math
 import sys
 import zipfile
 from dataclasses import dataclass, replace
@@ -49,6 +51,7 @@ class ExtractSummary:
     batches: list  # paths of the batch zips written this run
     bad: list  # clip names marked bad in their .json, so not extracted
     bad_extracted: list  # clip names marked bad, but extracted before they were marked
+    keep_changed: list  # clip names whose range to keep changed after they were extracted
 
 
 def open_bag_source(path):
@@ -63,8 +66,8 @@ def read_details(bag_path):
     """Return the details the recorder saved for a clip, from <clip>.json beside its .bag.
 
     A clip recorded before the recorder wrote details has no .json, and gets {}. Raises
-    DatasetError naming the file if it is not a JSON object, if bad is not true or false, or if
-    domain, site or branch is not text.
+    DatasetError naming the file if it is not a JSON object, if bad is not true or false, if
+    domain, site or branch is not text, or if keep is not [start, end] with 0 <= start < end.
     """
     path = bag_path.with_suffix('.json')
     if not path.exists():
@@ -81,7 +84,24 @@ def read_details(bag_path):
         value = details.get(field)
         if value is not None and not isinstance(value, str):
             raise DatasetError(f'{path}: {field} must be text')
+    keep = details.get('keep')
+    if keep is not None and not _is_range(keep):
+        raise DatasetError(f'{path}: keep must be [start, end] in seconds, with '
+                           f'0 <= start < end, not {keep!r}')
     return details
+
+
+def _is_range(keep):
+    """Return True if keep is [start, end]: two numbers, not true or false, 0 <= start < end."""
+    return (isinstance(keep, list) and len(keep) == 2
+            and all(isinstance(value, (int, float)) and not isinstance(value, bool)
+                    and math.isfinite(value) for value in keep)
+            and 0 <= keep[0] < keep[1])
+
+
+def format_keep(keep):
+    """Return a range to keep as clips.csv stores it, such as '0-12.5', or '' for none."""
+    return '' if keep is None else f'{keep[0]:g}-{keep[1]:g}'
 
 
 def branch_group(details):
@@ -98,15 +118,28 @@ def branch_group(details):
     return f'{site}/{branch}' if site else branch
 
 
-def extract_clip(dataset, frames, clip, domain, every):
+def extract_clip(dataset, frames, clip, domain, every, keep=None):
     """Save every Nth frame of a clip as a PNG and return their FrameRows, not yet batched.
 
     Frames are counted from 0 in the order they arrive, and a frame is kept when its index is a
-    multiple of every, so the first frame is always kept. Nothing is written to the CSV files.
+    multiple of every, so the first frame is always kept. keep, [start, end] in seconds from the
+    clip's first frame, keeps only the frames in that range: reading stops after its end, so a
+    broken end of the .bag is never read. Nothing is written to the CSV files.
     """
     dataset.images_dir.mkdir(parents=True, exist_ok=True)
     rows = []
+    first_timestamp = None
     for index, frame in enumerate(frames):
+        if first_timestamp is None:
+            first_timestamp = frame.timestamp
+        if keep is not None:
+            since_start = frame.timestamp - first_timestamp
+            if since_start > keep[1]:
+                break
+            if since_start < keep[0]:
+                continue
+        # Counted from the clip's first frame, not the range's, so frame ids stay the same
+        # whatever range is kept.
         if index % every != 0:
             continue
         name = frame_id(clip, index)
@@ -183,9 +216,11 @@ def extract_folder(dataset, folder, domain, every=10, hold=(), batch_size=100, o
     # Sort out which clips are new and which were extracted before.
     known = {row.clip: row for row in dataset.read_clips()}
     new_clips = []  # (clip, path, ClipRow) for each clip to extract
+    keeps = {}  # {clip: [start, end]} for the new clips that keep only part of themselves
     skipped = []
     bad = []
     bad_extracted = []
+    keep_changed = []
     for path in sorted(folder.glob('*.bag')):
         clip = path.stem
         details = read_details(path)
@@ -198,11 +233,16 @@ def extract_folder(dataset, folder, domain, every=10, hold=(), batch_size=100, o
                 f'{path.name} was recorded as {recorded_domain}, its .json says, but --domain '
                 f'is {domain}. Extract it from the folder of its own domain.')
         md5 = file_md5(path)
+        keep = details.get('keep')
         if clip not in known:
             new_clips.append((clip, path, ClipRow(clip, domain, path.stat().st_size, md5,
-                                                  branch_group(details))))
+                                                  branch_group(details), format_keep(keep))))
+            if keep is not None:
+                keeps[clip] = keep
         elif known[clip].md5 == md5:
             skipped.append(clip)
+            if format_keep(keep) != known[clip].keep:
+                keep_changed.append(clip)
         else:
             raise DatasetError(
                 f'{path.name} has the name of clip {clip}, which was already extracted, but '
@@ -235,7 +275,7 @@ def extract_folder(dataset, folder, domain, every=10, hold=(), batch_size=100, o
         print(f'extracting {path.name}')
         try:
             with open_bag(path) as source:
-                rows = extract_clip(dataset, source, clip, domain, every)
+                rows = extract_clip(dataset, source, clip, domain, every, keeps.get(clip))
         except Exception as error:
             raise DatasetError(f'{path.name} could not be read to the end: {error}') from error
 
@@ -253,7 +293,8 @@ def extract_folder(dataset, folder, domain, every=10, hold=(), batch_size=100, o
         frame_count += len(rows)
 
     batches = pack_batches(dataset, batch_size)
-    return ExtractSummary(new_names, skipped, frame_count, batches, bad, bad_extracted)
+    return ExtractSummary(new_names, skipped, frame_count, batches, bad, bad_extracted,
+                          keep_changed)
 
 
 def parse_args(argv=None):
@@ -290,6 +331,10 @@ def main(argv=None):
     for clip in summary.bad_extracted:
         print(f'warning: {clip} is marked bad, but it was extracted before it was marked, so its '
               'frames are still in the dataset. Nothing removes them by itself.')
+    for clip in summary.keep_changed:
+        print(f'warning: the range to keep of {clip} changed after it was extracted, so its '
+              'frames in the dataset are still those of the old range. Nothing changes them by '
+              'itself.')
     for path in summary.batches:
         print(f'to label: {path}')
     return 0

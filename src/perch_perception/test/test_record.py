@@ -191,6 +191,7 @@ def test_while_recording_the_details_say_bad_until_the_clip_ends(tmp_path):
 
     assert seen[0]['bad'] is True
     assert seen[0]['error'] == 'the recording did not finish'
+    assert seen[0]['seconds'] is None  # not known until the clip ends
     assert read_details(tmp_path)['bad'] is False
     assert 'error' not in read_details(tmp_path)
 

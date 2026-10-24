@@ -233,7 +233,8 @@ def test_a_clip_without_details_has_no_branch(tmp_path):
 
 
 @pytest.mark.parametrize('text', ['{"bad": tru', '["not", "an", "object"]', '{"bad": "yes"}',
-                                  '{"branch": 7}'])
+                                  '{"branch": 7}', '{"keep": [1]}', '{"keep": [2, 1]}',
+                                  '{"keep": [-1, 2]}', '{"keep": "0-5"}', '{"keep": [true, 2]}'])
 def test_a_details_file_that_cannot_be_read_is_an_error_naming_it(tmp_path, text):
     dataset = Dataset(tmp_path / 'dataset')
     folder = tmp_path / 'bags'
@@ -298,6 +299,75 @@ def test_holding_one_clip_of_a_new_branch_is_allowed(tmp_path):
                    open_bag=open_fake_bags({'a': 25, 'b': 25}))
 
     assert dataset.read_splits() == {'a': 'hold'}
+
+
+def frames_from(start_time, count):
+    """Numbered frames at 30 fps whose timestamps start at start_time, as a camera's do."""
+    return [frame._replace(timestamp=start_time + frame.timestamp)
+            for frame in numbered_frames(count)]
+
+
+def test_only_frames_inside_the_kept_range_are_extracted(tmp_path):
+    # The range is in seconds from the clip's first frame, whatever the camera's clock says.
+    dataset = Dataset(tmp_path / 'dataset')
+    frames = ListSource(frames_from(1234.5, 25))
+
+    rows = extract_clip(dataset, frames, 'a', 'outdoor', every=1, keep=[0.18, 0.52])
+
+    assert [row.frame_index for row in rows] == list(range(6, 16))
+
+
+def test_every_nth_frame_counts_from_the_start_of_the_clip_not_of_the_range(tmp_path):
+    dataset = Dataset(tmp_path / 'dataset')
+
+    rows = extract_clip(dataset, ListSource(numbered_frames(25)), 'a', 'outdoor', every=5,
+                        keep=[0.18, 0.52])
+
+    assert [row.frame_index for row in rows] == [10, 15]
+
+
+def test_reading_stops_after_the_kept_range_so_a_broken_end_is_never_reached(tmp_path):
+    dataset = Dataset(tmp_path / 'dataset')
+    folder = tmp_path / 'bags'
+    write_bag(folder, 'a')
+    write_details(folder, 'a', keep=[0, 0.2])
+
+    def ten_frames_then_an_error():
+        yield from numbered_frames(10)
+        raise RuntimeError('Frame didn\'t arrive within 1000')
+
+    summary = extract_folder(dataset, folder, 'outdoor',
+                             open_bag=lambda path: ListSource(ten_frames_then_an_error()))
+
+    assert summary.extracted == ['a']
+    assert [row.frame_index for row in dataset.read_frames()] == [0]
+
+
+def test_the_kept_range_goes_into_clips_csv(tmp_path):
+    dataset = Dataset(tmp_path / 'dataset')
+    folder = tmp_path / 'bags'
+    write_bag(folder, 'a')
+    write_bag(folder, 'b')
+    write_details(folder, 'a', keep=[0, 12.5])
+
+    extract_folder(dataset, folder, 'outdoor', open_bag=open_fake_bags({'a': 25, 'b': 25}))
+
+    assert [(row.clip, row.keep) for row in dataset.read_clips()] == [('a', '0-12.5'),
+                                                                       ('b', '')]
+
+
+def test_a_range_changed_after_extraction_is_reported(tmp_path, capsys):
+    dataset = Dataset(tmp_path / 'dataset')
+    folder = tmp_path / 'bags'
+    write_bag(folder, 'a')
+    write_details(folder, 'a', keep=[0, 12.5])
+    extract_folder(dataset, folder, 'outdoor', open_bag=open_fake_bags({'a': 25}))
+    write_details(folder, 'a', keep=[2, 12.5])
+
+    main([str(folder), '--domain', 'outdoor', '--dataset', str(dataset.root)])
+
+    assert 'warning: the range to keep of a changed' in capsys.readouterr().out
+    assert dataset.read_clips()[0].keep == '0-12.5'
 
 
 def test_a_bag_that_fails_partway_leaves_earlier_clips_and_no_rows_for_itself(tmp_path):

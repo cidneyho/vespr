@@ -4,7 +4,8 @@ The dataset lives outside the repo, in ~/vespr_dataset by default, because recor
 goes into git:
 
     manifest.csv          one row per extracted frame (FrameRow)
-    clips.csv             one row per extracted clip (ClipRow), with the branch it shows
+    clips.csv             one row per extracted clip (ClipRow), with the branch it shows and
+                          the part of it that was kept
     splits.csv            one row per clip: clip, split (train, val, hold or test)
     images/<frame_id>.png left infrared image, 8-bit, lossless
     labels/<frame_id>.txt YOLO segmentation polygons; present only once labeled
@@ -34,7 +35,8 @@ HELD_OUT_SPLITS = ('hold', 'test')  # never trained on, tuned with or scored dur
 CLASS_NAMES = {0: 'branch'}
 DEFAULT_DATASET = Path('~/vespr_dataset')
 SPLITS_HEADER = ('clip', 'split')  # the columns of splits.csv
-# The columns clips.csv must have. group came later, so a clips.csv without it still reads.
+# The columns clips.csv must have. group and keep came later, so a clips.csv without them still
+# reads.
 CLIPS_REQUIRED = ('clip', 'domain', 'size', 'md5')
 
 
@@ -67,6 +69,7 @@ class ClipRow:
     size: int  # bytes of the .bag
     md5: str  # of the .bag, lowercase hex
     group: str = ''  # the branch it shows, such as 'park/7', from its .json; '' for none
+    keep: str = ''  # the seconds extracted, such as '0-12.5', from its .json; '' for all
 
 
 def frame_id(clip, frame_index):
@@ -183,7 +186,7 @@ def _frame_row(row):
 def _clip_row(row):
     """Return one row of clips.csv, a dict keyed by column, as a ClipRow."""
     return ClipRow(row['clip'], row['domain'], int(row['size']), row['md5'],
-                   row.get('group') or '')
+                   row.get('group') or '', row.get('keep') or '')
 
 
 class Dataset:

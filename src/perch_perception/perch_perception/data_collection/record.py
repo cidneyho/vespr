@@ -495,7 +495,7 @@ class Recorder:
         details_path = os.path.join(self._folder, name + '.json')
         with self._lock:
             details = {'clip': name, 'number': number, 'domain': self._domain,
-                       'started': started.isoformat(timespec='seconds'), 'seconds': 0.0,
+                       'started': started.isoformat(timespec='seconds'), 'seconds': None,
                        **self._details, 'bad': False}
         # Until the clip ends, its .json says bad, so a clip cut short by a pulled battery or a
         # killed process is never taken for a good one. It is written before the camera starts,

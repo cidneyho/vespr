@@ -16,6 +16,7 @@ estimate and no diameter estimate, and the ROS node publishes nothing.
 - [Running a source in a child process](#running-a-source-in-a-child-process-process_sourcepy)
 - [The clip recorder](#the-clip-recorder-data_collectionrecordpy)
 - [Keeping clips on Google Drive](#keeping-clips-on-google-drive-data_collectionclip_storagepy)
+- [Keeping part of a clip](#keeping-part-of-a-clip-data_collectiontrimpy)
 - [Reading a source from the command line](#reading-a-source-from-the-command-line-runpy)
 - [The ROS node](#the-ros-node-perception_nodepy)
 - [The branch distance script](#the-branch-distance-script-branch_distancepy)
@@ -271,10 +272,11 @@ The details file:
 | `clip`, `number` | The clip's name and number |
 | `domain` | `indoor` or `outdoor`, from `--domain` |
 | `started` | The start time from the computer's clock, for example `2026-10-23T14:02:11`. Wrong if the Jetson's clock was not set. |
-| `seconds` | How long the clip is |
+| `seconds` | How long the clip is, from its first frame to its last; `null` until the clip ends, so it stays `null` for a clip that did not finish |
 | `site`, `branch`, `light`, `notes` | What was in the page's fields when Record was pressed. Spaces at the ends are trimmed. |
 | `bad` | `true` if the clip was marked bad |
 | `error` | Why the clip was marked bad by itself: the camera's error, or `the recording did not finish`. Kept if the clip is unmarked later. |
+| `keep` | Only present once `trim` has set it: `[start, end]`, the seconds of the clip to extract (see Keeping part of a clip) |
 
 The fields carry over from clip to clip, so they are typed once per branch. `extract_frames`
 uses `site` and `branch` to keep every clip of a branch in one split (see the training README),
@@ -393,6 +395,38 @@ in the [package README](../README.md#google-drive-storage).
 - **Structure.** Plain-Python functions decide what to do. The `Rclone` class is the only code
   that runs rclone, and the commands take it as an argument, so tests use an in-memory stand-in.
 
+## Keeping part of a clip (`data_collection/trim.py`)
+
+```bash
+python -m perch_perception.data_collection.trim 42 --keep 0 12.5 --domain outdoor
+python -m perch_perception.data_collection.trim 42 --all --domain outdoor
+```
+
+For a clip that is good apart from its start or end, such as one stopped too late. Run it on the
+Mac after downloading the clip, and before `extract_frames`. Find the times by playing the clip's
+`.mp4`.
+
+- **The clip** is named by its number (`42` or `0042`) or by its whole name, which old clips
+  named only by their start time need. Two clips with the same number, as after the counter file
+  was lost, are refused with both names, so give the whole name.
+- **`--keep START END`** writes `"keep": [START, END]` into the clip's `.json` and sets `bad` to
+  `false`, because a trimmed clip is one worth using. It refuses a range that does not start at
+  0 or later and end after it starts, and one that starts after the clip's `seconds`. An end past
+  the end of the clip keeps the rest of it.
+- **`--all`** removes the range, so the whole clip is kept again. It leaves `bad` as it is.
+- **`--domain`** picks `~/vespr_recordings/<domain>`, as `clip_storage` does; `--folder` picks
+  another folder. A clip with no `.json`, recorded before the recorder wrote one, gets one.
+
+Nothing is cut out of the `.bag`, which stays exactly as it was recorded. `extract_frames` takes
+only the frames in the range, timed from the clip's first frame, and stops reading after its end,
+so a `.bag` whose end is broken, as after a pulled battery, can be saved by ending the range
+before the break.
+
+The times are close, not exact: the `.mp4` player counts frames, while the range is matched to
+the camera's timestamps, and the two drift apart a little if frames were dropped while recording.
+Leave half a second of margin. Set the range before the clip is first extracted: the `.json` is
+only read then, and changing the range later only brings a warning from `extract_frames`.
+
 ## Reading a source from the command line (`run.py`)
 
 ```bash
@@ -445,7 +479,7 @@ Unlike the rest of the package, it imports `pyrealsense2` directly and has no te
 
 ## Tests
 
-185 tests in the files below, run with `python -m pytest` from the package folder. The training
+206 tests in the files below, run with `python -m pytest` from the package folder. The training
 pipeline's tests, `test_dataset.py`, `test_extract_frames.py` and the others named after its
 steps, are not listed here. All pass on the Mac and on the
 Jetson. None of them needs a camera
@@ -457,10 +491,11 @@ or a network.
 | `test_realsense_source.py` | 12 | `BagSource` end to end on a synthetic bag: every frame once (the buffer copy), depth in meters, zeros kept, the image is left IR, timestamps in seconds, recorded intrinsics, no IMU, missing file. Also the USB frame rate choice and the macOS IMU refusal. |
 | `test_process_source.py` | 11 | Frames and images cross the process boundary, `fps` is passed back, open errors, open timeouts and a Ctrl+C while opening end the child, the source is closed before the child exits, Ctrl+C does not kill the child early, a frozen child is killed and reported, a dying child is reported |
 | `test_record.py` | 71 | Clip numbers and names, the shared counter (never reused, a counter file that is not a number from 1 refused), a taken clip name getting `-2`, `--domain` and the folders, giving files, folders and the counter back under `sudo`, the details file and its fields, the details marked bad until the clip ends (and when the last write fails, after an unexpected error, or after a Ctrl+C while the camera closes), Ctrl+C mid-clip saving a good clip, a failed start that leaves a `.bag`, `seconds` ending at the last frame (after a camera error too), marking bad (by hand, after a camera error, refused while recording or after cleanup), preview and recording sessions, the preview video's frame count, status states, error handling, the camera loop following the button, and every web endpoint |
+| `test_trim.py` | 20 | Finding a clip by its number or name, a number two clips share, keeping a range and clearing `bad`, refused ranges, an end past the clip's end, `--all`, a clip with no `.json`, a `.json` that is not JSON, the command line, and that `extract_frames` reads what it writes |
 | `test_run.py` | 9 | The depth summary ignores zeros, the summary line, frame counting and `--max-frames`, and replaying a synthetic bag through `main()` |
 | `test_clip_storage.py` | 60 | Clip grouping, still-being-written, copy and delete decisions, the rclone listing format, `upload`, `download`, `cleanup`, the command line, an unreadable clip, Ctrl+C, partial downloads and a login that expires mid-run, all with an in-memory rclone |
 | `test_clip_storage_rclone.py` | 4 | `upload`, `download` and `cleanup` with the real rclone between two local folders (skipped where rclone is missing) |
-| `test_no_realsense_leak.py` | 12 | `data_collection.clip_storage`, `data_collection.record`, `frame_source`, `process_source`, `run` and the seven `training` modules import without pulling in `pyrealsense2` (checked in a fresh interpreter) |
+| `test_no_realsense_leak.py` | 13 | `data_collection.clip_storage`, `data_collection.record`, `data_collection.trim`, `frame_source`, `process_source`, `run` and the seven `training` modules import without pulling in `pyrealsense2` (checked in a fresh interpreter) |
 
 Helpers:
 

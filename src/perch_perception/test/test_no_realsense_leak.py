@@ -16,6 +16,7 @@ CAMERA_FREE_MODULES = [
     'perch_perception.frame_source',
     'perch_perception.process_source',
     'perch_perception.data_collection.record',
+    'perch_perception.data_collection.trim',
     'perch_perception.run',
     'perch_perception.training.dataset',
     'perch_perception.training.extract_frames',

@@ -20,6 +20,7 @@ perch_perception/
   data_collection/      tools for collecting training data, kept apart from the perception code
     record.py           browser page with a live view and a Record / Stop button
     clip_storage.py     upload, download and clean up clips on Google Drive (rclone)
+    trim.py             keep only part of a clip, such as one stopped too late
   training/             from recorded clips to a trained branch segmentation model (see its README)
 launch/
   perception.launch.py  starts perception_node
@@ -163,7 +164,9 @@ that same branch, that is the question that matters, but it says nothing about o
 Several real indoor branches, if you can get them, give a fairer indoor score.
 
 **A take went wrong?** Press "Mark #0042 bad" before the next Record. Nothing is deleted: the clip
-still uploads, and the training pipeline skips it. Press it again to unmark. A clip that does not
+still uploads, and the training pipeline skips it. Press it again to unmark. If only its start or
+end is wrong, such as a clip stopped too late, mark it bad anyway and note why; later, on the Mac,
+`trim` keeps the good part and unmarks it (see the perception README, Keeping part of a clip). A clip that does not
 end normally stays marked bad by itself: the camera failing, the recorder being killed or the
 battery being pulled.
 
