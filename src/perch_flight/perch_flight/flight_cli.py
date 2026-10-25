@@ -23,6 +23,7 @@ yaw <deg>                       turn in place, + clockwise, - counterclockwise
 speed <m/s>                     cruise speed for the next moves
 hold                            stop where you are (or take control back from the pilot)
 land
+disarm                          stop the motors, once landing (e.g. hanging from a branch)
 status
 quit                            lands first if flying"""
 
@@ -82,6 +83,9 @@ def run_command(commander, line):
         if name == 'land':
             expect(0)
             return commander.land(), False
+        if name == 'disarm':
+            expect(0)
+            return commander.disarm(), False
         return f'unknown command: {name}. Type help', False
     except Refused as e:
         return f'refused: {e}', False

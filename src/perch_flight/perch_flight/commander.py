@@ -1,7 +1,7 @@
 """Flight commander: everything needed to fly PX4 in offboard mode, behind a small API.
 
 The flight CLI (flight_cli.py) drives it today; the perch mission can drive it later.
-Call takeoff(), goto(), move_body(), yaw_by(), hold() and land() from any thread. Only
+Call takeoff(), goto(), move_body(), yaw_by(), hold(), land() and disarm() from any thread. Only
 the RATE Hz timer talks to PX4, so a caller waiting on something never stops the
 setpoint stream.
 
@@ -32,6 +32,7 @@ TAKEOFF_ALTITUDE = 1.5   # m
 ARRIVE_TOLERANCE = 0.15  # m from the target that counts as arrived
 COMMAND_RETRY = 1.0      # s between resends of arm / mode / land, which can get lost
 START_TIMEOUT = 5.0      # s to arm and enter offboard before giving up
+FORCE_DISARM = 21196.0   # PX4's magic param2 that disarms even when it thinks it's flying
 
 # PX4's QoS for /fmu topics; subscribers with a different profile receive nothing
 PX4_QOS = QoSProfile(
@@ -136,6 +137,7 @@ class Commander(Node):
         self.trajectory = None
         self.takeoff_altitude = None   # set while starting from the ground
         self.land_confirmed = False
+        self.disarm_requested = False
         self.arrived = True
         self.cruise_speed = CRUISE_SPEED
         self.get_logger().info('Waiting for PX4 (is the Micro XRCE-DDS Agent running?)')
@@ -216,9 +218,21 @@ class Commander(Node):
         with self.lock:
             if self.state in (State.STARTING, State.FLYING, State.PILOT):
                 self.land_confirmed = False
+                self.disarm_requested = False
                 self.set_state(State.LANDING)
                 return 'landing'
             raise Refused(f'not flying (state: {self.state.value})')
+
+    def disarm(self):
+        """Stop the motors now, in land mode. For when PX4 can't tell it has landed, such as
+        hanging from a branch: its land check needs the rangefinder to see the ground close by.
+        """
+        with self.lock:
+            if self.state != State.LANDING or not self.land_confirmed:
+                raise Refused(f'only in land mode, to stop the motors (state: {self.state.value})')
+            self.disarm_requested = True
+            self.last_retry = 0.0
+            return 'disarming'
 
     def set_speed(self, speed):
         with self.lock:
@@ -300,6 +314,11 @@ class Commander(Node):
                 if not self.armed():
                     self.get_logger().info('Landed and disarmed')
                     self.set_state(State.IDLE)
+                elif self.disarm_requested:
+                    if now - self.last_retry >= COMMAND_RETRY:
+                        self.send_command(
+                            VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0, FORCE_DISARM)
+                        self.last_retry = now
                 elif self.status.nav_state == VehicleStatus.NAVIGATION_STATE_AUTO_LAND:
                     self.land_confirmed = True
                 elif self.land_confirmed:
