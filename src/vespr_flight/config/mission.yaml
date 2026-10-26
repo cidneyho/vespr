@@ -17,6 +17,7 @@ mission:
     pre_launch_lift: 0.03     # m above where it hangs to aim for on re-arming (starts PX4's takeoff)
     pre_launch_time: 5.0      # s for the thrust to build, still latched, before releasing
     climb_out_lift: 0.15      # m to rise while backing out, to clear the hook's overhang
+    fall_height: 0.5          # m: on the branch, a rangefinder reading below this means it fell
 
     # Settings for each phase's planner. The target and heading come from the /vespr/perch goal
     fly_to:
@@ -31,7 +32,9 @@ mission:
       capture_x: 0.0          # where the branch should end up in base_link, m: the hook hole
       capture_y: 0.0
       capture_z: 0.30
-      standoff_back: 0.6      # standoff point from the capture point, m
+      standoff_back: 1.0      # standoff point from the capture point, m. The camera sits 0.30 m
+                              # below the capture point and sees 21 deg up: at 1.0 m the branch
+                              # is 18.7 deg up, still in view
       standoff_down: 0.0
       approach_speed: 0.2     # m/s
       final_speed: 0.1        # m/s

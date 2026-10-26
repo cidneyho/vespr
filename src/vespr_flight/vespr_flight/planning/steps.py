@@ -1,7 +1,8 @@
 """What a planner sees (Situation) and what it returns (steps). See docs/design/planning.md.
 
 A pose is (position, orientation): position (x, y, z) in m, orientation a unit quaternion
-(x, y, z, w). The branch is in base_link: x forward, y left, z up.
+(x, y, z, w). The branch is in base_link levelled: x forward, y left, z up, but with the drone's
+roll and pitch taken out (see level()), so "up" is really up.
 """
 from dataclasses import dataclass
 import math
@@ -15,7 +16,7 @@ class Situation:
     # The drone in Commander's frame, from PX4's position estimate. Only phase 1 uses them
     position: tuple | None = None   # (north, east, altitude), m from the takeoff spot
     heading: float | None = None    # deg, 0 = north, 90 = east
-    branch: tuple | None = None     # newest /vespr/perception/branch_pose, in base_link
+    branch: tuple | None = None     # newest /vespr/perception/branch_pose, in base_link levelled
     branch_time: float | None = None  # s, when that sighting was taken
 
 
@@ -81,6 +82,33 @@ def rotate(q, v):
     return (v[0] + 2 * (qw * cx + qy * cz - qz * cy),
             v[1] + 2 * (qw * cy + qz * cx - qx * cz),
             v[2] + 2 * (qw * cz + qx * cy - qy * cx))
+
+
+def quat_multiply(a, b):
+    ax, ay, az, aw = a
+    bx, by, bz, bw = b
+    return (aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+            aw * bw - ax * bx - ay * by - az * bz)
+
+
+def level(pose, attitude):
+    """A pose seen from base_link, re-expressed with the drone's roll and pitch taken out.
+
+    The detector reports in base_link, which tilts with the drone. Stopping after a step, the
+    drone pitches a degree or two, and at 1 m that moves the branch by 2 to 3 cm up or down.
+    Moves (MoveBody) are level, so plan from a level view. attitude is PX4's vehicle_attitude q,
+    (w, x, y, z), from the body (x forward, y right, z down) to north-east-down.
+    """
+    w, x, y, z = attitude
+    roll = math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+    pitch = math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))  # nose up is positive
+    # In base_link (y left, z up) the same tilt is the roll about x, and minus the pitch about y
+    tilt = quat_multiply((0.0, math.sin(-pitch / 2), 0.0, math.cos(-pitch / 2)),
+                         (math.sin(roll / 2), 0.0, 0.0, math.cos(roll / 2)))
+    position, orientation = pose
+    return rotate(tilt, position), quat_multiply(tilt, orientation)
 
 
 class Pacer:

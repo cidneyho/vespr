@@ -119,7 +119,7 @@ Every number is a placeholder to tune by experiment. None are known yet.
 | `cruise_speed` | 0.5 | Phase 1 speed, m/s |
 | `search_step`, `search_dwell`, `seen_frames` | 30.0, 1.0, 5 | Search: deg per turn, s to look, sightings in a row |
 | `capture_x`, `capture_y`, `capture_z` | 0.0, 0.0, 0.30 | Where the branch should end up in `base_link`, m |
-| `standoff_back`, `standoff_down` | 0.6, 0.0 | Standoff point from the capture point, m |
+| `standoff_back`, `standoff_down` | 1.0, 0.0 | Standoff point from the capture point, m. 1.0 keeps the branch in the camera's view (it sits 0.30 m below the capture point) |
 | `approach_speed`, `final_speed` | 0.2, 0.1 | m/s |
 | `step_length` | 0.3 | Longest approach step, m |
 | `yaw_tolerance`, `standoff_tolerance` | 5.0, 0.05 | deg, m |

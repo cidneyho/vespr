@@ -1,6 +1,8 @@
 # Design: mission loop
 
-Status: work in progress (2026-10-26). Implemented and unit tested. In the sim it flies from takeoff to hanging from the rod with the motors off. Leaving the branch does not work yet. See "Open issues" at the end.
+Status: work in progress (2026-10-26). Implemented and unit tested. In the sim the full cycle works (3 of 3 runs: perch, hang, leave, land), but leaving the branch releases before the motors take the weight, the reverse of the board's order. See "Open issues" at the end.
+
+Walk-through with diagrams, and how to run it in the sim: [mission_flow.md](mission_flow.md).
 
 ## Goal
 

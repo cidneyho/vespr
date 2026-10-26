@@ -20,9 +20,11 @@ from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import String
 from std_srvs.srv import SetBool
 
-from perch_flight.commander import Commander
+from perch_flight.commander import Commander, PX4_QOS
+from px4_msgs.msg import VehicleAttitude
 from vespr_flight.perch_cycle import Failed, PerchCycle, Settings
 from vespr_flight.planning.planner import make
+from vespr_flight.planning.steps import level
 from vespr_interfaces.action import Grasp, Perch
 
 PHASES = ('fly_to', 'search', 'approach')
@@ -96,6 +98,9 @@ class Mission(Node):
         self.state_pub = self.create_publisher(String, '/vespr/mission/state', LATCHED)
         self.create_subscription(PoseStamped, '/vespr/perception/branch_pose', self.on_branch,
                                  qos_profile_sensor_data, callback_group=self.group)
+        self.create_subscription(VehicleAttitude, '/fmu/out/vehicle_attitude', self.on_attitude,
+                                 PX4_QOS, callback_group=self.group)
+        self.attitude = None
         self.branch = (None, None)
         self.running = threading.Lock()
         self.stopping = False  # Ctrl+C: end the run as if cancelled
@@ -119,10 +124,16 @@ class Mission(Node):
                               **settings)
         return out
 
+    def on_attitude(self, msg):
+        self.attitude = tuple(msg.q)
+
     def on_branch(self, msg):
         # Timed by arrival on Commander's clock: the detector stamps sim time, Commander uses wall time
+        if self.attitude is None:
+            return  # can't level it yet
         p, o = msg.pose.position, msg.pose.orientation
-        self.branch = (((p.x, p.y, p.z), (o.x, o.y, o.z, o.w)), self.commander.now())
+        pose = ((p.x, p.y, p.z), (o.x, o.y, o.z, o.w))
+        self.branch = (level(pose, self.attitude), self.commander.now())
 
     def on_goal(self, goal):
         if self.running.locked():

@@ -12,7 +12,7 @@ from vespr_flight.planning.steps import Abort, Done, Grasp, MoveBody, Pacer, Wai
 class Standoff:
 
     def __init__(self, capture_x=0.0, capture_y=0.0, capture_z=0.30,
-                 standoff_back=0.6, standoff_down=0.0, approach_speed=0.2, final_speed=0.1,
+                 standoff_back=1.0, standoff_down=0.0, approach_speed=0.2, final_speed=0.1,
                  step_length=0.3, yaw_tolerance=5.0, standoff_tolerance=0.05,
                  keep_in_view=25.0, lost_timeout=2.0, max_range=3.0, settle_time=0.5):
         self.capture = (capture_x, capture_y, capture_z)

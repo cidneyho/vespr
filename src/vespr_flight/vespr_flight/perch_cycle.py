@@ -29,14 +29,20 @@ class Settings:
     land_timeout: float = 60.0        # s to land and disarm
     back_out: float = 0.6             # m to back straight out when no final move was made
     back_out_speed: float = 0.1       # m/s
-    pre_launch_lift: float = 0.03     # m above where it hangs to aim for on re-arming. Any climb
-                                      # starts PX4's takeoff; the latch stops the drone rising far
+    # m above where it hangs to aim for on re-arming. Any climb starts PX4's takeoff; the latch
+    # stops the drone rising far
+    pre_launch_lift: float = 0.03
     pre_launch_time: float = 5.0      # s for the thrust to build, still latched, before releasing
     climb_out_lift: float = 0.15      # m to rise while backing out, to clear the hook's overhang
+    fall_height: float = 0.5          # m: on the branch, a rangefinder reading below this means it fell
 
 
 class Failed(Exception):
     """This state can't go on. The message says why."""
+
+
+class Fell(Failed):
+    """The rangefinder says the drone is near the floor when it should be hanging."""
 
 
 class Cancelled(Exception):
@@ -63,6 +69,7 @@ class PerchCycle:
         self.state = 'ground'
         self.final_move = None       # the approach's last move, reversed to climb out
         self.ignore_cancel = False   # once a cancel is being acted on
+        self.fell = False
         self.legs_on = False
 
     def run(self, goal):
@@ -104,7 +111,7 @@ class PerchCycle:
         self.motors_off()
 
         self.enter('perched')
-        self.wait(goal.perch_time)
+        self.wait(goal.perch_time, self.check_hanging)
         self.leave()
 
     def leave(self):
@@ -153,6 +160,8 @@ class PerchCycle:
                 self.legs.release()
                 self.back_out()
                 return self.land_and_disable('released, backed out and landed')
+            if self.fell:
+                return self.land_and_disable('on the floor')
             if self.state == 'motors_off':
                 return 'still hanging on the branch in land mode. Someone has to come'
             if self.state == 'pre_launch':
@@ -224,9 +233,22 @@ class PerchCycle:
     def motors_off(self):
         self.call(self.flight.land)
         self.wait(self.settings.land_settle)
+        self.check_hanging()  # with the thrust down, a drone the hook isn't holding comes down
         self.call(self.flight.disarm)
         self.wait_until(lambda: self.flight.state.value == 'idle', self.settings.motors_off_timeout,
                         'did not disarm on the branch')
+        self.wait(1.0)
+        self.check_hanging()  # and with the motors off, it drops
+
+    def check_hanging(self):
+        """Raise Fell if the rangefinder reads near the floor. The sim's "gripped" only means the
+        gate closed, and the real legs may slip: this is how a missed grasp shows."""
+        with self.flight.lock:
+            p = self.flight.position
+            height = p.dist_bottom if p.dist_bottom_valid else None
+        if height is not None and height < self.settings.fall_height:
+            self.fell = True
+            raise Fell(f'fell off the branch: rangefinder reads {height:.2f} m')
 
     def land(self):
         self.call(self.flight.land)
@@ -280,10 +302,12 @@ class PerchCycle:
             self.ignore_cancel = True  # act on it once
             raise Cancelled()
 
-    def wait(self, seconds):
+    def wait(self, seconds, also_check=None):
         end = self.flight.now() + seconds
         while self.flight.now() < end:
             self.check()
+            if also_check:
+                also_check()
             self.sleep(POLL)
 
     def wait_until(self, condition, timeout, failure):

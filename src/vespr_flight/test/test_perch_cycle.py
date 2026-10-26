@@ -12,11 +12,13 @@ from vespr_flight.planning.steps import Abort, Done, Goto, Grasp, MoveBody, Wait
 class FakeFlight:
     """Commander's interface. Moves happen at once; landing takes `land_time` s of the fake clock."""
 
-    def __init__(self, land_time=3.0, can_disarm=True, can_rearm=True):
+    def __init__(self, land_time=3.0, can_disarm=True, can_rearm=True, falls=False):
         self.lock = threading.Lock()
         self.state = SimpleNamespace(value='idle')
         self.arrived = True
-        self.position = SimpleNamespace(x=0.0, y=0.0, z=0.0, heading=0.0)
+        self.position = SimpleNamespace(x=0.0, y=0.0, z=0.0, heading=0.0,
+                                        dist_bottom=1.1, dist_bottom_valid=True)
+        self.falls = falls  # the hook isn't holding it: it drops once disarmed
         self.time = 0.0
         self.land_time = land_time
         self.can_disarm = can_disarm
@@ -65,6 +67,8 @@ class FakeFlight:
         self.record('disarm')
         if self.can_disarm:
             self.landing_until = self.time  # disarmed at once
+            if self.falls:
+                self.position.dist_bottom = 0.18
 
 
 class FakeLegs:
@@ -247,3 +251,26 @@ def test_other_refusals_abort():
     success, state, message = cycle.run(Goal())
     assert (success, state) == (False, 'fly_to')
     assert message.startswith('goto refused: not flying')
+
+
+def test_missed_grasp_shows_as_a_fall():
+    cycle, flight, legs, states = make_cycle(flight=FakeFlight(falls=True))
+    success, state, message = cycle.run(Goal())
+    assert (success, state) == (False, 'motors_off')
+    assert message == 'fell off the branch: rangefinder reads 0.18 m. on the floor'
+    assert 'perched' not in states
+    assert legs.calls[-1] == ('enable', False)
+
+
+def test_falling_while_perched_is_caught():
+    cycle, flight, legs, states = make_cycle()
+    original = flight.now
+
+    def now():
+        if 'perched' in states and flight.time > 20.0:
+            flight.position.dist_bottom = 0.18  # slipped off partway through the perch
+        return original()
+    flight.now = now
+    success, state, message = cycle.run(Goal(perch_time=100.0))
+    assert (success, state) == (False, 'perched')
+    assert message.startswith('fell off the branch')

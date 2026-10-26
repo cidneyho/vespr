@@ -14,6 +14,7 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>vespr_interfaces</exec_depend>
+  <exec_depend>px4_msgs</exec_depend>
   <!-- The flight Commander. Temporary: it moves here from perch_flight later -->
   <exec_depend>perch_flight</exec_depend>
 

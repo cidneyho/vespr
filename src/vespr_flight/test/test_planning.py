@@ -5,7 +5,7 @@ import pytest
 
 from vespr_flight.planning.planner import make
 from vespr_flight.planning.steps import (Abort, Done, Goto, Grasp, MoveBody, Situation, Wait,
-                                         YawBy, duration)
+                                         YawBy, duration, level)
 
 
 def yaw_q(degrees):
@@ -164,14 +164,14 @@ def test_approach_turns_the_short_way():
 
 
 def test_final_move_is_from_the_standoff_point():
-    # Drone already at the standoff point: branch 0.6 m ahead of the capture point
-    world = FakeWorld(drone=(0.0, 0.0, 1.0), branch=(0.6, 0.0, 1.3))
+    # Drone already at the standoff point: branch 1.0 m ahead of the capture point
+    world = FakeWorld(drone=(0.0, 0.0, 1.0), branch=(1.0, 0.0, 1.3))
     planner = make('approach', 'standoff')
     planner.start(world.situation())
     step = planner.next_step(world.situation())
-    assert step == MoveBody(pytest.approx(0.6), pytest.approx(0.0), pytest.approx(0.0), 0.1)
-    # Grasp only once the 6 s move has ended and the drone has settled
-    assert planner.next_step(Situation(time=world.time + 3.0)) == Wait()
+    assert step == MoveBody(pytest.approx(1.0), pytest.approx(0.0), pytest.approx(0.0), 0.1)
+    # Grasp only once the 10 s move has ended and the drone has settled
+    assert planner.next_step(Situation(time=world.time + 5.0)) == Wait()
     world.carry_out(step)
     world.time += 0.5
     assert planner.next_step(world.situation()) == Grasp()
@@ -215,3 +215,36 @@ def test_approach_from_many_starts():
         moves, end = run(make('approach', 'standoff'), world, limit=1000)
         assert end == Done(), (branch, world.branch_yaw, end)
         assert capture_error(world) < 0.06, (branch, world.branch_yaw)
+
+
+# ---- level ----
+
+def px4_attitude(roll=0.0, pitch=0.0, yaw=0.0):
+    """PX4's vehicle_attitude q (w, x, y, z) for angles in deg: body FRD to NED, nose up positive."""
+    r, p, y = (math.radians(a) / 2 for a in (roll, pitch, yaw))
+    return (math.cos(r) * math.cos(p) * math.cos(y) + math.sin(r) * math.sin(p) * math.sin(y),
+            math.sin(r) * math.cos(p) * math.cos(y) - math.cos(r) * math.sin(p) * math.sin(y),
+            math.cos(r) * math.sin(p) * math.cos(y) + math.sin(r) * math.cos(p) * math.sin(y),
+            math.cos(r) * math.cos(p) * math.sin(y) - math.sin(r) * math.sin(p) * math.cos(y))
+
+
+def test_level_takes_out_pitch():
+    # Nose up 2 deg: a branch 1 m straight ahead, level, looks 3.5 cm low from the tilted body
+    a = math.radians(2)
+    seen = ((math.cos(a), 0.0, -math.sin(a)), yaw_q(90))
+    (x, y, z), _ = level(seen, px4_attitude(pitch=2, yaw=37))  # heading doesn't matter
+    assert (x, y, z) == pytest.approx((1, 0, 0), abs=1e-9)
+
+
+def test_level_takes_out_roll():
+    # Right side down 3 deg: a point 1 m to the left, level, looks low from the tilted body
+    a = math.radians(3)
+    seen = ((0.0, math.cos(a), -math.sin(a)), yaw_q(90))
+    (x, y, z), _ = level(seen, px4_attitude(roll=3))
+    assert (x, y, z) == pytest.approx((0, 1, 0), abs=1e-9)
+
+
+def test_level_changes_nothing_when_level():
+    pose = ((1.2, -0.3, 0.4), yaw_q(80))
+    (position, q) = level(pose, px4_attitude(yaw=120))
+    assert position == pytest.approx(pose[0]) and q == pytest.approx(pose[1])
