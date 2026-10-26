@@ -3,9 +3,19 @@
 <package format="3">
   <name>vespr_flight</name>
   <version>0.0.0</version>
-  <description>VESPR mission logic: flight path planners (docs/design/planning.md)</description>
+  <description>VESPR mission logic: the mission node and its flight path planners (docs/design/mission.md, planning.md)</description>
   <maintainer email="chonodom@gmail.com">Dom Taing</maintainer>
   <license>TODO</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>vespr_interfaces</exec_depend>
+  <!-- The flight Commander. Temporary: it moves here from perch_flight later -->
+  <exec_depend>perch_flight</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
 
