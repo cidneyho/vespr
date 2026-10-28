@@ -72,14 +72,14 @@ Same as `mocap_sim`: read Gazebo directly over gz-transport, finding entities by
 | `drop_rate` | 0.0 | Chance (0 to 1) that a sample is dropped |
 | `seed` | 0 | Random seed; 0 means a new one each run. Set it to repeat a run's noise exactly |
 
-## Package: `vespr_sim`
+## Package: `perch_sim`
 
 | File | Contents |
 |---|---|
-| `vespr_sim/gazebo.py` | Moved out of `mocap_sim`: reading gz poses by name, and the rate limit |
-| `vespr_sim/sim_sensor.py` | Base class for both nodes: parameters, reading the branch, dropped frames, noise, latency |
-| `vespr_sim/fake_branch_detector.py` | The node, named `branch_detector` so the graph matches the real detector's |
-| `vespr_sim/poses.py` | Gains `inverse`, for the branch relative to the drone |
+| `perch_sim/gazebo.py` | Moved out of `mocap_sim`: reading gz poses by name, and the rate limit |
+| `perch_sim/sim_sensor.py` | Base class for both nodes: parameters, reading the branch, dropped frames, noise, latency |
+| `perch_sim/fake_branch_detector.py` | The node, named `branch_detector` so the graph matches the real detector's |
+| `perch_sim/poses.py` | Gains `inverse`, for the branch relative to the drone |
 | `launch/fake_branch_detector.launch.py` | The node, every parameter as a launch argument |
 
 ## Testing

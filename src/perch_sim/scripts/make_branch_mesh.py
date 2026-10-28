@@ -249,7 +249,7 @@ def write_sdf(branches, path):
         </material>
       </visual>
     </link>
-    <!-- No collision or visual: a marker that Gazebo reports the pose of (vespr_sim mocap_sim) -->
+    <!-- No collision or visual: a marker that Gazebo reports the pose of (perch_sim mocap_sim) -->
     <link name="perch_point">
       <pose>{perch[0]:.4f} {perch[1]:.4f} {perch[2]:.4f} 0 {perch_pitch:.5f} {perch_yaw:.5f}</pose>
     </link>

@@ -113,6 +113,19 @@ gz service -s /world/perch_rod/create --reqtype gz.msgs.EntityFactory --reptype 
 
 For branch and tree meshes, put the `.dae`, `.obj`, or `.stl` file in `models/<name>/meshes/` and use it as `<mesh><uri>model://<name>/meshes/branch.dae</uri></mesh>` in the visual. Keep the collision as simple shapes, such as cylinders along the limbs. Mesh collisions are slow and contact on them is unreliable.
 
+## Sim nodes
+
+`perch_sim` is also a ROS 2 package. Its nodes stand in for the real drone's outside inputs, fed from Gazebo's ground truth, and use the same node and topic names as the real ones. Start the sim first (`run_sim.sh perch_rod gz_x500_hook`), then any of:
+
+| Launch | Node | Stands in for | Design |
+|---|---|---|---|
+| `ros2 launch perch_sim mocap_sim.launch.py` | `mocap_sim` | mocap: `/mocap/vespr/pose`, `/mocap/branch/pose` | [mocap_sim.md](../../docs/design/mocap_sim.md) |
+| `ros2 launch perch_sim fake_branch_detector.launch.py` | `branch_detector` | the branch detector: `/vespr/perception/branch_pose` | [fake_branch_detector.md](../../docs/design/fake_branch_detector.md) |
+| `ros2 launch perch_sim fake_vio.launch.py` | `vio` | VIO: `/vespr/perception/odom` | [fake_vio.md](../../docs/design/fake_vio.md) |
+| `ros2 launch perch_sim legs_bridge_sim.launch.py` | `legs_bridge` | the legs: `/vespr/legs/*`, driving the hook gate | [legs.md](../../docs/design/legs.md) |
+
+To run the whole perch cycle at once, use `src/perch_mission/scripts/sim_mission.sh`.
+
 ## QGroundControl (host)
 
 QGC runs on the host, not in the container. The container uses host networking, so QGC finds the simulated drone automatically. Download the x86_64 AppImage from the [QGC install page](https://docs.qgroundcontrol.com/Stable_V5.1/en/qgc-user-guide/getting_started/download_and_install.html). The current AppImage targets Ubuntu 24.04 and later. On 22.04 you need an older release. Prerequisites:

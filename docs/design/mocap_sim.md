@@ -62,12 +62,12 @@ The node reads both **directly through gz-transport** (Gazebo's Python bindings)
 
 The drone and branch get independent noise. A dropped sample is dropped for both bodies, as when a real mocap frame is lost.
 
-## Package: `vespr_sim`
+## Package: `perch_sim`
 
 | File | Contents |
 |---|---|
-| `vespr_sim/mocap_sim.py` | The node, named `mocap_sim` |
-| `vespr_sim/poses.py` | Pure helpers: combine poses, add noise |
+| `perch_sim/mocap_sim.py` | The node, named `mocap_sim` |
+| `perch_sim/poses.py` | Pure helpers: combine poses, add noise |
 | `launch/mocap_sim.launch.py` | The node, with every parameter above as a launch argument |
 | `test/` | Unit tests for `poses.py`, and a node test with fake Gazebo poses |
 

@@ -67,13 +67,13 @@ At most `rate` samples a second (default 30, the camera's frame rate), with the 
 | `latency` | 0.0 | Delay before publishing, s |
 | `drop_rate` | 0.0 | Chance (0 to 1) that a sample is dropped |
 
-## Package: `vespr_sim`
+## Package: `perch_sim`
 
 | File | Contents |
 |---|---|
-| `vespr_sim/fake_vio.py` | The node, named `vio` so the graph matches the real VIO's |
-| `vespr_sim/sim_sensor.py` | Gains the `seed` parameter. The branch reading stays; the fake VIO just doesn't use it |
-| `vespr_sim/poses.py` | Gains whatever velocity and yaw helpers the node needs |
+| `perch_sim/fake_vio.py` | The node, named `vio` so the graph matches the real VIO's |
+| `perch_sim/sim_sensor.py` | Gains the `seed` parameter. The branch reading stays; the fake VIO just doesn't use it |
+| `perch_sim/poses.py` | Gains whatever velocity and yaw helpers the node needs |
 | `launch/fake_vio.launch.py` | The node, every parameter as a launch argument |
 
 ## Testing

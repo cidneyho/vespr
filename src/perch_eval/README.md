@@ -6,10 +6,6 @@ raw, stationary accelerometer and gyroscope data, and `imu_allan.py` runs the Al
 analysis on it. The results of the first overnight run are in
 [results/RESULTS.md](results/RESULTS.md).
 
-**Package name.** [NAMING.md](../../NAMING.md) calls this package `vespr_eval`. It is named
-`perch_eval` to match the existing `perch_*` packages. Renaming the whole repo to `vespr_*`
-is a team decision and has not been made yet; when it is, this package is renamed with the rest.
-
 ## Layout
 
 ```

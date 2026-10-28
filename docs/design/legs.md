@@ -14,8 +14,8 @@ All four are served by a node named `legs_bridge`.
 |---|---|---|---|
 | Topic | `/vespr/legs/state` | `sensor_msgs/msg/JointState` | Leg position, 10 Hz |
 | Service | `/vespr/legs/set_enabled` | `std_srvs/srv/SetBool` | Motors on or off. Also the software stop |
-| Action | `/vespr/legs/grasp` | `vespr_interfaces/action/Grasp` | Close until gripped |
-| Action | `/vespr/legs/release` | `vespr_interfaces/action/Grasp` | Open |
+| Action | `/vespr/legs/grasp` | `perch_interfaces/action/Grasp` | Close until gripped |
+| Action | `/vespr/legs/release` | `perch_interfaces/action/Grasp` | Open |
 
 **State message.** One joint, `name = ["latch"]`. `position` is 0 (open) to 1 (closed). `effort` is motor current in A, left empty when unknown (as in sim). "Gripped" is not part of the state; it comes from the grasp result.
 
@@ -42,10 +42,10 @@ bool moving
 
 | Package | Build | Contents |
 |---|---|---|
-| `vespr_interfaces` | ament_cmake | `action/Grasp.action` |
-| `vespr_legs` | ament_python | `legs_bridge_sim` node, `sim.launch.py`, unit tests |
+| `perch_interfaces` | ament_cmake | `action/Grasp.action` |
+| `perch_sim` | ament_python | `legs_bridge_sim` node, `legs_bridge_sim.launch.py`, unit tests |
 
-The real bridge goes in `vespr_legs` later. The sim executable is `legs_bridge_sim`, but its node name is `legs_bridge`, so the sim's ROS graph matches the real one.
+The real bridge goes in its own package, `perch_legs`, later. The sim executable is `legs_bridge_sim`, but its node name is `legs_bridge`, so the sim's ROS graph matches the real one.
 
 ## Sim node
 
@@ -72,7 +72,7 @@ The hook model already has what we need:
 ## Testing
 
 - Unit tests for the pure logic: angle to latch position, the done check, and the enabled/goal rules.
-- Manual: `run_sim.sh perch_rod gz_x500_hook`, then `ros2 launch vespr_legs sim.launch.py`. Then call `set_enabled`, send grasp and release goals with `ros2 action send_goal`, and cancel one mid-swing.
+- Manual: `run_sim.sh perch_rod gz_x500_hook`, then `ros2 launch perch_sim legs_bridge_sim.launch.py`. Then call `set_enabled`, send grasp and release goals with `ros2 action send_goal`, and cancel one mid-swing.
 
 ## Out of scope
 

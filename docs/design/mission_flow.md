@@ -7,25 +7,25 @@ A walk-through of the mission node with diagrams. The design and its open issues
 Build once after changes:
 
 ```bash
-cd ~/vespr && colcon build --packages-select vespr_interfaces perch_flight vespr_flight && source install/setup.bash
+cd ~/vespr && colcon build --packages-select perch_interfaces perch_flight perch_mission perch_sim && source install/setup.bash
 ```
 
 One command starts everything (DDS agent, PX4 and Gazebo with its window, fake branch detector, sim legs, mission node) and sends a perch goal:
 
 ```bash
-~/vespr/src/vespr_flight/scripts/sim_mission.sh
+~/vespr/src/perch_mission/scripts/sim_mission.sh
 ```
 
 - It prints each state and each move as the mission makes it, then the result.
 - After the goal, everything keeps running so you can look around. **Ctrl+C stops everything**, landing the drone first if it is flying.
-- Full logs of each part: `/tmp/vespr_sim_mission/`.
+- Full logs of each part: `/tmp/perch_sim_mission/`.
 - In Gazebo, right-click `x500_hook_0` → **Follow** to keep the camera on the drone.
 
 | Option | Effect |
 |---|---|
 | `NO_GOAL=1` | Start everything without sending a goal; it prints the command to send one |
 | `GOAL='{north: 0.3, east: 0.8, altitude: 1.3, heading: 60.0, perch_time: 30.0}'` | A different goal |
-| `PARAMS=~/my_settings.yaml` | Your copy of [config/mission.yaml](../../src/vespr_flight/config/mission.yaml) |
+| `PARAMS=~/my_settings.yaml` | Your copy of [config/mission.yaml](../../src/perch_mission/config/mission.yaml) |
 | `HEADLESS=1` | No Gazebo window |
 | `WORLD=perch_branch` | Another world |
 
@@ -115,4 +115,4 @@ flowchart TD
 
 ## Where the numbers come from
 
-Every number above is a setting in [config/mission.yaml](../../src/vespr_flight/config/mission.yaml): the planners, their speeds and distances, the timeouts, the fall height, the lifts. Copy the file to experiment and pass it with `PARAMS=`.
+Every number above is a setting in [config/mission.yaml](../../src/perch_mission/config/mission.yaml): the planners, their speeds and distances, the timeouts, the fall height, the lifts. Copy the file to experiment and pass it with `PARAMS=`.

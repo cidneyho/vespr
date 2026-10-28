@@ -14,7 +14,7 @@ This step is sim only, flying on flow and rangefinder alone. The mocap stages co
 
 An operator sends a goal, watches progress, gets a result, and can cancel.
 
-New type, `vespr_interfaces/action/Perch.action`:
+New type, `perch_interfaces/action/Perch.action`:
 
 ```
 # Goal: where to go, in Commander's frame (m from the takeoff spot), and how long to stay
@@ -33,7 +33,7 @@ string state          # the current state
 
 From the command line:
 ```
-ros2 action send_goal /vespr/perch vespr_interfaces/action/Perch \
+ros2 action send_goal /vespr/perch perch_interfaces/action/Perch \
   "{north: 0.3, east: 0.8, altitude: 1.3, heading: 60.0, perch_time: 10.0}" --feedback
 ```
 
@@ -121,13 +121,13 @@ When a planner returns `Abort`, a step fails, or the operator cancels, the missi
 
 The back-out move uses the approach planner's `standoff_back` and `final_speed`, so it reverses the final move.
 
-## Package: `vespr_flight`
+## Package: `perch_mission`
 
 | File | Contents |
 |---|---|
-| `vespr_flight/mission.py` | The `mission` node: the action, the states, the aborts |
+| `perch_mission/mission.py` | The `mission` node: the action, the states, the aborts |
 | `launch/mission.launch.py` | The mission, every parameter as a launch argument |
-| `vespr_interfaces/action/Perch.action` | The action type |
+| `perch_interfaces/action/Perch.action` | The action type |
 
 ## Testing
 

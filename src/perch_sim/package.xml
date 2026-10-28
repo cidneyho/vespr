@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>perch_sim</name>
+  <version>0.0.0</version>
+  <description>Gazebo sim of the VESPR drone: worlds, models and airframes, plus sim-only stand-in nodes fed from Gazebo (mocap_sim, fake_branch_detector, fake_vio, legs_bridge_sim)</description>
+  <maintainer email="chonodom@gmail.com">Dom Taing</maintainer>
+  <license>TODO</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>action_msgs</exec_depend>
+  <exec_depend>perch_interfaces</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>builtin_interfaces</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <!-- Gazebo's Python bindings (gz.transport13, gz.msgs10) come from the Ubuntu packages
+       python3-gz-transport13 and python3-gz-msgs10, installed with Gazebo Harmonic -->
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

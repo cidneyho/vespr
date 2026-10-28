@@ -127,17 +127,17 @@ Every number is a placeholder to tune by experiment. None are known yet.
 | `lost_timeout`, `max_range` | 2.0, 3.0 | s, m |
 | `settle_time` | 0.5 | Wait after each move before trusting a sighting, s (every planner) |
 
-## Package: `vespr_flight`
+## Package: `perch_mission`
 
-The naming doc puts mission logic in `vespr_flight`. New, pure Python, no ROS in the planners:
+Mission logic lives in `perch_mission`. New, pure Python, no ROS in the planners:
 
 | File | Contents |
 |---|---|
-| `vespr_flight/planning/steps.py` | `Situation`, the step types |
-| `vespr_flight/planning/planner.py` | The `Planner` protocol, and a table from name to implementation |
-| `vespr_flight/planning/fly_to.py` | `straight` |
-| `vespr_flight/planning/search.py` | `turn` |
-| `vespr_flight/planning/approach.py` | `standoff` |
+| `perch_mission/planning/steps.py` | `Situation`, the step types |
+| `perch_mission/planning/planner.py` | The `Planner` protocol, and a table from name to implementation |
+| `perch_mission/planning/fly_to.py` | `straight` |
+| `perch_mission/planning/search.py` | `turn` |
+| `perch_mission/planning/approach.py` | `standoff` |
 
 Commander stays in `perch_flight` as it is.
 
