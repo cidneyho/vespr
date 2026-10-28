@@ -1,6 +1,6 @@
 # Design: mission loop
 
-Status: work in progress (2026-10-26). Implemented and unit tested. In the sim the full cycle works (3 of 3 runs: perch, hang, leave, land), but leaving the branch releases before the motors take the weight, the reverse of the board's order. See "Open issues" at the end.
+Status: work in progress (2026-10-28). Implemented and unit tested. In the sim the full cycle worked in 4 runs (3 of 3 on 2026-10-26, 1 on 2026-10-28), but leaving the branch is unreliable: on 2026-10-28 one run released and backed out and stayed hooked on the rod (open issue A). See "Open issues" at the end.
 
 Walk-through with diagrams, and how to run it in the sim: [mission_flow.md](mission_flow.md).
 
@@ -118,6 +118,7 @@ When a planner returns `Abort`, a step fails, or the operator cancels, the missi
 | `land_settle` | 2.0 | s in land mode before disarming, so the hook takes the weight |
 | `motors_off_timeout` | 5.0 | s for PX4 to disarm on the branch |
 | `land_timeout` | 60.0 | s to land and disarm |
+| `fall_height` | 0.5 | m: after motors off and while perched, a rangefinder reading below this means the drone fell |
 
 The back-out move uses the approach planner's `standoff_back` and `final_speed`, so it reverses the final move.
 
@@ -149,10 +150,14 @@ The back-out move uses the approach planner's `standoff_back` and `final_speed`,
 
 Found in sim runs on 2026-10-25. To decide before going on.
 
-**A. Leaving the branch (pre-launch, release, climb-out).** While hanging, PX4's height estimate drifts 1 to 2 cm/s though the drone is still. On re-arming, PX4 believes it has already lifted and holds thrust near 0.5, but this drone needs 0.76 to hover, so it never lifts off the hook. (PX4 also learned a wrong hover thrust while hanging; fixed for the sim drone by a fixed `MPC_THR_HOVER` 0.76 with `MPC_USE_HTE` 0 in its airframe. The real drone needs its own measured value.) The code now releases first, then backs out while rising `climb_out_lift`. That is safe in the sim, where the hook's fixed overhang carries the weight, but it reverses the board's order (thrust before release), which protects the real drone from dropping. Not yet seen working on the hook. Decide: release first (sim only for now), or find a way to build thrust before release that doesn't depend on PX4's height estimate.
+**A. Leaving the branch (pre-launch, release, climb-out).** While hanging, PX4's height estimate drifts 1 to 2 cm/s though the drone is still. On re-arming, PX4 believes it has already lifted and holds thrust near 0.5, but this drone needs 0.76 to hover, so it never lifts off the hook. (PX4 also learned a wrong hover thrust while hanging; fixed for the sim drone by a fixed `MPC_THR_HOVER` 0.76 with `MPC_USE_HTE` 0 in its airframe. The real drone needs its own measured value.) The code now releases first, then backs out while rising `climb_out_lift`. That is safe in the sim, where the hook's fixed overhang carries the weight, but it reverses the board's order (thrust before release), which protects the real drone from dropping. Decide: release first (sim only for now), or find a way to build thrust before release that doesn't depend on PX4's height estimate.
 
-**B. A missed grasp reports success.** The sim's "gripped" only means the gate closed. One run missed the rod, fell to the floor at motors-off, and still ended "perched and came back down". Proposed: after motors-off, check the rangefinder still reads well above the floor, else end with "fell off the branch".
+Seen 2026-10-28: one run perched, released and backed out, but the hook never rose clear of the rod's overhang. Land mode then can't finish while hanging, so the mission ended "did not land in time. did not finish landing" after `land_timeout`, with the drone still armed in land mode on the rod (PX4: not landed, rangefinder 1.11 m). Two other runs left cleanly, so it is intermittent.
+
+**B. A missed grasp reports success.** Fixed 2026-10-26 by the fall check: after motors-off and while perched, a rangefinder reading below `fall_height` ends the run with "fell off the branch" and lands. The sim's "gripped" still only means the gate closed.
 
 **C. Approach accuracy.** One miss in four approaches; the hook hole is 10 cm across. One run turned back and forth about 20 times (±7°) before moving. PX4's heading was about 11° off the truth on flow alone. Not yet investigated.
 
-**D. The camera now sits lower.** The sim camera was 0.24 m too high (fixed 2026-10-26: it is level with the body, where the RealSense will go). At the capture point the branch is now 0.30 m above the camera, and the camera sees only 21° up, so the branch leaves the view about 0.9 m out. The default `standoff_back` of 0.6 m is too close: the approach will lose the branch. Options: `standoff_back` about 1.0 m (a longer blind final move), or tilt the camera up (`tilt_up_deg` in `hook.yaml`), which depends on the real mount.
+Seen 2026-10-28: one approach turned back and forth for 160 s, the turns growing from ±6° to ±19° (the `keep_in_view` limit), until it lost the branch. That run had extra load (mocap_sim, fake_vio and a photo camera running). The planners time their moves by wall clock, so a slower sim may let them act on sightings taken mid-turn. Not confirmed. Nothing limits how long a phase may run, so the drone hovered until the branch was lost. Proposed: a time limit per phase.
+
+**D. The camera now sits lower.** The sim camera was 0.24 m too high (fixed 2026-10-26: it is level with the body, where the RealSense will go). At the capture point the branch is now 0.30 m above the camera, and the camera sees only 21° up, so the branch leaves the view about 0.9 m out. The default `standoff_back` of 0.6 m is too close: the approach will lose the branch. Options: `standoff_back` about 1.0 m (a longer blind final move), or tilt the camera up (`tilt_up_deg` in `hook.yaml`), which depends on the real mount. Done 2026-10-26: `standoff_back` is 1.0 m; at the standoff the branch is 18.7° up, in view.

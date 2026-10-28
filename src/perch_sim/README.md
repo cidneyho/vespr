@@ -1,6 +1,6 @@
 # perch_sim
 
-Gazebo simulation of the X500.
+Gazebo simulation of the X500: our worlds, the hook drone and its airframe, and a ROS 2 package of sim-only nodes that stand in for mocap, the branch detector, VIO and the legs.
 
 ## Quick start
 
@@ -17,6 +17,17 @@ Gazebo simulation of the X500.
 4. Wait for `Ready for takeoff!`, then type `commander takeoff`. The drone climbs and hovers. Type `commander land` to bring it down.
 
 To stop the sim, press Ctrl+C in the first terminal.
+
+## Run the perch mission
+
+The whole perch cycle on the hook drone, in one terminal: build, then one script starts the DDS agent, PX4 and Gazebo, the fake branch detector, the sim legs and the mission node, and sends a perch goal.
+
+```bash
+cd ~/vespr && colcon build && source install/setup.bash
+src/perch_mission/scripts/sim_mission.sh             # NO_GOAL=1 to send goals yourself
+```
+
+Ctrl+C stops everything, landing the drone first. Options, logs and how the mission works: [docs/design/mission_flow.md](../../docs/design/mission_flow.md). After pulling the `vespr_*` → `perch_*` package restructure, delete `build/`, `install/` and `log/` before building.
 
 ## Fly it from ROS 2
 
@@ -48,7 +59,7 @@ PX4_GZ_WORLD=baylands make px4_sitl gz_x500_depth
 Vehicles (in `~/PX4-Autopilot/Tools/simulation/gz/models`): `gz_x500_depth` (forward depth camera), `gz_x500_lidar_down` (downward rangefinder), `gz_x500_mono_cam_down` (downward camera), and more.
 Worlds (in `~/PX4-Autopilot/Tools/simulation/gz/worlds`): `default`, `baylands`, `walls`, `windy`, `forest`, `lawn`, and more.
 
-Run headless (no Gazebo window): `HEADLESS=1 make px4_sitl gz_x500`.
+Run headless (no Gazebo window): `HEADLESS=1 make px4_sitl gz_x500`. Vehicles with cameras (`gz_x500_depth`, `gz_x500_hook`) need headless GPU rendering for this; without it Gazebo stalls, PX4 gets no sensor data and never says `Ready for takeoff!`. Use the window instead.
 
 ## Perch worlds
 
@@ -79,6 +90,8 @@ GPS=1 ~/vespr/src/perch_sim/scripts/run_sim.sh perch_rod gz_x500_hook  # GPS on,
 ```
 
 The model is generated from `hook.yaml` by [scripts/make_hook_model.py](scripts/make_hook_model.py). Design: [docs/design/flow_rangefinder.md](../../docs/design/flow_rangefinder.md).
+
+**Hover thrust.** The airframe fixes `MPC_THR_HOVER` at 0.76, PX4's own in-flight estimate for this drone (the plain X500 uses 0.60), and turns hover-thrust learning off (`MPC_USE_HTE 0`). With learning on, hanging from the branch in land mode taught PX4 about 0.5, and it then couldn't lift off the hook. 0.76 is the sim drone's value: measure the real drone's from a hover log.
 
 ### Camera for vision tests
 
@@ -117,14 +130,14 @@ For branch and tree meshes, put the `.dae`, `.obj`, or `.stl` file in `models/<n
 
 `perch_sim` is also a ROS 2 package. Its nodes stand in for the real drone's outside inputs, fed from Gazebo's ground truth, and use the same node and topic names as the real ones. Start the sim first (`run_sim.sh perch_rod gz_x500_hook`), then any of:
 
-| Launch | Node | Stands in for | Design |
+| Launch | Node | Stands in for: publishes | Design |
 |---|---|---|---|
-| `ros2 launch perch_sim mocap_sim.launch.py` | `mocap_sim` | mocap: `/mocap/vespr/pose`, `/mocap/branch/pose` | [mocap_sim.md](../../docs/design/mocap_sim.md) |
-| `ros2 launch perch_sim fake_branch_detector.launch.py` | `branch_detector` | the branch detector: `/vespr/perception/branch_pose` | [fake_branch_detector.md](../../docs/design/fake_branch_detector.md) |
-| `ros2 launch perch_sim fake_vio.launch.py` | `vio` | VIO: `/vespr/perception/odom` | [fake_vio.md](../../docs/design/fake_vio.md) |
-| `ros2 launch perch_sim legs_bridge_sim.launch.py` | `legs_bridge` | the legs: `/vespr/legs/*`, driving the hook gate | [legs.md](../../docs/design/legs.md) |
+| `ros2 launch perch_sim mocap_sim.launch.py` | `mocap_sim` | mocap: `/mocap/vespr/pose`, `/mocap/branch/pose` (`geometry_msgs/PoseStamped`, frame `mocap`) | [mocap_sim.md](../../docs/design/mocap_sim.md) |
+| `ros2 launch perch_sim fake_branch_detector.launch.py` | `branch_detector` | the branch detector: `/vespr/perception/branch_pose` (`PoseStamped`, frame `base_link`, only while in view) | [fake_branch_detector.md](../../docs/design/fake_branch_detector.md) |
+| `ros2 launch perch_sim fake_vio.launch.py` | `vio` | VIO: `/vespr/perception/odom` (`nav_msgs/Odometry`, `odom` → `base_link`) | [fake_vio.md](../../docs/design/fake_vio.md) |
+| `ros2 launch perch_sim legs_bridge_sim.launch.py` | `legs_bridge` | the legs: `/vespr/legs/state` (`JointState`), `set_enabled`, `grasp`, `release`, driving the hook gate | [legs.md](../../docs/design/legs.md) |
 
-To run the whole perch cycle at once, use `src/perch_mission/scripts/sim_mission.sh`.
+All of them read Gazebo's ground truth directly over gz-transport, perfect by default, with noise, latency and dropped frames as parameters. `sim_mission.sh` starts the detector and the legs, the two the mission uses. Start `mocap_sim` and `fake_vio` yourself when you need them. Check one with `ros2 topic echo --once <topic>`.
 
 ## QGroundControl (host)
 
@@ -147,9 +160,9 @@ If you can't remember where you saved it, run `find ~ -iname "QGroundControl*.Ap
 
 ## Next steps
 
-1. **Harder scenes for vision:** a textured ground, more trees, and distractor branches around `perch_branch`.
-2. **Perch-approach node:** fly beside the bar, then descend slowly. Same setpoint pattern as `perch_flight`'s `fly_square`, later velocity setpoints.
-3. **Model the perching mechanism** once the design exists: copy the X500 model, add links and joints.
+1. **Leaving the branch reliably:** after re-arming on the branch PX4 holds about 0.5 thrust, so the drone sometimes stays hooked on the rod (open issue A in [docs/design/mission.md](../../docs/design/mission.md)).
+2. **Harder scenes for vision:** more trees and distractor branches around `perch_branch`.
+3. **The real legs** in place of the hook, once their design exists: links and joints with their real mass.
 
 Known limit: Gazebo is good for flight dynamics, control logic, and sensor data, and weak at contact detail such as a claw gripping bark. Validate the grip on hardware.
 

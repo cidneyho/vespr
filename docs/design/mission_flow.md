@@ -10,6 +10,8 @@ Build once after changes:
 cd ~/vespr && colcon build --packages-select perch_interfaces perch_flight perch_mission perch_sim && source install/setup.bash
 ```
 
+After pulling the package restructure (`vespr_*` → `perch_*`), delete `build/`, `install/` and `log/` first, so no old `vespr_*` packages are left in `install/`.
+
 One command starts everything (DDS agent, PX4 and Gazebo with its window, fake branch detector, sim legs, mission node) and sends a perch goal:
 
 ```bash
@@ -26,7 +28,7 @@ One command starts everything (DDS agent, PX4 and Gazebo with its window, fake b
 | `NO_GOAL=1` | Start everything without sending a goal; it prints the command to send one |
 | `GOAL='{north: 0.3, east: 0.8, altitude: 1.3, heading: 60.0, perch_time: 30.0}'` | A different goal |
 | `PARAMS=~/my_settings.yaml` | Your copy of [config/mission.yaml](../../src/perch_mission/config/mission.yaml) |
-| `HEADLESS=1` | No Gazebo window |
+| `HEADLESS=1` | No Gazebo window. Needs headless GPU rendering for the hook drone's cameras: on a machine without it, Gazebo stalls, PX4 gets no sensor data and never reports ready (seen 2026-10-28) |
 | `WORLD=perch_branch` | Another world |
 
 ## How the pieces fit together
