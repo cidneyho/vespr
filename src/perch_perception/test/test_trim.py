@@ -7,8 +7,8 @@ the recorder writes. Nothing is replayed.
 import json
 import os
 
+import cv2
 import numpy as np
-
 import pytest
 
 from perch_perception.data_collection import trim
@@ -187,24 +187,6 @@ def test_trimming_a_clip_that_did_not_finish_warns_that_its_bag_may_not_open(tmp
     assert 'may not open' in capsys.readouterr().out
 
 
-def test_a_preview_video_shorter_than_the_clip_is_warned_about(tmp_path, capsys):
-    # Frames the recorder dropped are missing from the .mp4, so its times run behind the clip's.
-    from perch_perception.data_collection.record import PreviewVideo
-
-    cv2 = pytest.importorskip('cv2')
-    write_clip(tmp_path, seconds=14.2)
-    video = PreviewVideo(str(tmp_path / f'{CLIP}.mp4'), 10)
-    for _ in range(100):  # 10 s at 10 fps
-        video.write(np.zeros((48, 64), dtype=np.uint8))
-    video.close()
-    assert cv2.VideoCapture(str(tmp_path / f'{CLIP}.mp4')).isOpened()
-
-    trim.main(['42', '--keep', '0', '5', '--domain', 'outdoor', '--folder', str(tmp_path)])
-
-    out = capsys.readouterr().out
-    assert 'warning' in out and '10 s' in out and '14.2 s' in out
-
-
 def write_preview(folder, frames, fps=10):
     from perch_perception.data_collection.record import PreviewVideo
 
@@ -212,6 +194,18 @@ def write_preview(folder, frames, fps=10):
     for _ in range(frames):
         video.write(np.zeros((48, 64), dtype=np.uint8))
     video.close()
+
+
+def test_a_preview_video_shorter_than_the_clip_is_warned_about(tmp_path, capsys):
+    # Frames the recorder dropped are missing from the .mp4, so its times run behind the clip's.
+    write_clip(tmp_path, seconds=14.2)
+    write_preview(tmp_path, 100)  # 10 s at 10 fps
+    assert cv2.VideoCapture(str(tmp_path / f'{CLIP}.mp4')).isOpened()
+
+    trim.main(['42', '--keep', '0', '5', '--domain', 'outdoor', '--folder', str(tmp_path)])
+
+    out = capsys.readouterr().out
+    assert 'warning' in out and '10 s' in out and '14.2 s' in out
 
 
 def test_a_preview_video_as_long_as_the_clip_gives_no_warning(tmp_path, capsys):

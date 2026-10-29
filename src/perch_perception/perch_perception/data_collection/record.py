@@ -6,7 +6,7 @@
 --domain is indoor (the indoor rig) or outdoor (handheld) and picks the clip
 folder, ~/vespr_recordings/indoor or ~/vespr_recordings/outdoor. On macOS,
 run it with sudo. To control a recorder on the Jetson from a Mac, see
-"Recording from the Mac" in the package README.
+"Recording clips" in the package README.
 
 The page shows the live left IR image, a Record / Stop button, fields for the
 site, branch, light and notes, and a button to mark the last clip bad. Every
@@ -33,6 +33,7 @@ freeze this page along with it.
 """
 
 import argparse
+import contextlib
 import http.server
 import json
 import os
@@ -124,7 +125,8 @@ function show(status) {
   const lines = {
     preview: 'Ready',
     starting: 'Starting the camera...',
-    recording: 'Recording ' + (status.clip ? number(status.clip) : '') + '   ' + status.seconds + ' s',
+    recording: 'Recording ' + (status.clip ? number(status.clip) : '') + '   '
+      + status.seconds + ' s',
     stopping: 'Saving...',
   };
   document.getElementById('status').textContent = lines[state];
@@ -586,10 +588,8 @@ class Recorder:
                 # The camera failed after creating the .bag. Its .json stays bad, now with the
                 # camera's error if there was one.
                 if 'error' in details:
-                    try:
+                    with contextlib.suppress(OSError):  # the .json written first still says bad
                         write_details(details_path, dict(unfinished, error=details['error']))
-                    except OSError:
-                        pass  # the .json written first still says bad
             else:
                 # The camera never started and left no .bag: a .json alone is no clip.
                 os.remove(details_path)

@@ -8,8 +8,8 @@
 --domain is indoor or outdoor and picks both the local and the Drive folder.
 
 A clip is every file in the recordings folder that shares a name and ends in
-.bag, .mp4 or .json, for example 2026-10-15T14-02-11.bag and
-2026-10-15T14-02-11.mp4. upload sends finished clips that are not on the
+.bag, .mp4 or .json, for example 0042_2026-10-15T14-02-11.bag and
+0042_2026-10-15T14-02-11.mp4. upload sends finished clips that are not on the
 Drive yet, download fetches clips from it, and cleanup deletes local clips
 only once every file of the clip is on the Drive with a matching checksum.
 
@@ -27,7 +27,7 @@ import shutil
 import subprocess
 import sys
 import time
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 
 from perch_perception.data_collection.record import domain_folder
 
@@ -42,7 +42,7 @@ SETUP_HELP = 'see "Google Drive storage" in the README'
 class LocalFile(NamedTuple):
     """A clip file on this machine."""
 
-    name: str  # file name, for example '2026-10-15T14-02-11.bag'
+    name: str  # file name, for example '0042_2026-10-15T14-02-11.bag'
     size: int  # bytes
     modified: float  # last modification, seconds since the epoch
 
@@ -52,7 +52,7 @@ class RemoteFile(NamedTuple):
 
     name: str
     size: int  # bytes
-    md5: Optional[str]  # checksum the Drive reports, or None if it gave none
+    md5: str | None  # checksum the Drive reports, or None if it gave none
 
 
 class CopyPlan(NamedTuple):
@@ -78,7 +78,7 @@ def is_login_error(error):
 def clip_of(file_name):
     """Return the clip a file belongs to, or None if it is not a clip file.
 
-    '2026-10-15T14-02-11.bag' belongs to clip '2026-10-15T14-02-11'. Hidden
+    '0042_2026-10-15T14-02-11.bag' belongs to clip '0042_2026-10-15T14-02-11'. Hidden
     files, such as the '._' copies macOS leaves on USB drives, never count.
     """
     if file_name.startswith('.'):
@@ -360,7 +360,7 @@ def upload(folder, remote, rclone, now=None):
 def download(folder, remote, rclone, names=(), missing=False):
     """Fetch clips from the Drive into folder. Never replaces a local file.
 
-    names are clip names. A file name such as '2026-10-15T14-02-11.bag' is
+    names are clip names. A file name such as '0042_2026-10-15T14-02-11.bag' is
     taken to mean its clip. With missing=True, every clip file on the Drive
     that is not in folder is fetched, which also completes a clip that was
     only partly downloaded. Returns the exit code: 1 when any clip was not

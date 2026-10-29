@@ -447,12 +447,7 @@ def test_marking_bad_while_a_clip_is_recording_is_refused(tmp_path):
 
 def test_marking_a_clip_that_was_already_cleaned_up_is_refused(tmp_path):
     # cleanup deletes uploaded clips; a lone .json would conflict with the Drive on every upload.
-    def camera(record_to):
-        if record_to is not None:
-            open(record_to, 'wb').close()
-        return ScriptedSource([make_frame(0.0, shape=SHAPE)])
-
-    recorder = make_recorder(camera, tmp_path)
+    recorder = make_recorder(FakeCamera(frame_count=1), tmp_path)
     record_one_clip(recorder)
     for path in tmp_path.glob(CLIP + '.*'):
         path.unlink()
@@ -464,7 +459,7 @@ def test_marking_a_clip_that_was_already_cleaned_up_is_refused(tmp_path):
 
 def test_under_sudo_the_details_and_the_counter_are_handed_back(tmp_path, monkeypatch):
     handed = []
-    monkeypatch.setattr(record.os, 'chown', lambda path, uid, gid: handed.append(str(path)))
+    monkeypatch.setattr(record.os, 'chown', lambda path, *ids: handed.append(str(path)))
     monkeypatch.setenv('SUDO_UID', '501')
     monkeypatch.setenv('SUDO_GID', '20')
     counter = tmp_path / 'recordings' / 'next_clip_id'
