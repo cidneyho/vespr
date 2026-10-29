@@ -1,7 +1,7 @@
 """Flight commander: everything needed to fly PX4 in offboard mode, behind a small API.
 
 The flight CLI (flight_cli.py) drives it today; the perch mission can drive it later.
-Call takeoff(), goto(), move_body(), yaw_by(), hold() and land() from any thread. Only
+Call takeoff(), goto(), move_body(), yaw_by(), hold(), land() and disarm() from any thread. Only
 the RATE Hz timer talks to PX4, so a caller waiting on something never stops the
 setpoint stream.
 
@@ -32,6 +32,7 @@ TAKEOFF_ALTITUDE = 1.5   # m
 ARRIVE_TOLERANCE = 0.15  # m from the target that counts as arrived
 COMMAND_RETRY = 1.0      # s between resends of arm / mode / land, which can get lost
 START_TIMEOUT = 5.0      # s to arm and enter offboard before giving up
+FORCE_DISARM = 21196.0   # PX4's magic param2 that disarms even when it thinks it's flying
 
 # PX4's QoS for /fmu topics; subscribers with a different profile receive nothing
 PX4_QOS = QoSProfile(
@@ -136,6 +137,7 @@ class Commander(Node):
         self.trajectory = None
         self.takeoff_altitude = None   # set while starting from the ground
         self.land_confirmed = False
+        self.disarm_requested = False
         self.arrived = True
         self.cruise_speed = CRUISE_SPEED
         self.get_logger().info('Waiting for PX4 (is the Micro XRCE-DDS Agent running?)')
@@ -162,7 +164,7 @@ class Commander(Node):
             if self.state != State.IDLE:
                 raise Refused(f'can only take off from the ground (state: {self.state.value})')
             if not self.ready():
-                raise Refused('PX4 not ready: no position estimate or pre-flight checks failing')
+                raise Refused('PX4 not ready: no position estimate yet')
             self.trajectory = Trajectory.hold(self.measured_ned(), self.measured_yaw(), self.now())
             self.takeoff_altitude = altitude
             self.set_state(State.STARTING)
@@ -216,9 +218,21 @@ class Commander(Node):
         with self.lock:
             if self.state in (State.STARTING, State.FLYING, State.PILOT):
                 self.land_confirmed = False
+                self.disarm_requested = False
                 self.set_state(State.LANDING)
                 return 'landing'
             raise Refused(f'not flying (state: {self.state.value})')
+
+    def disarm(self):
+        """Stop the motors now, in land mode. For when PX4 can't tell it has landed, such as
+        hanging from a branch: its land check needs the rangefinder to see the ground close by.
+        """
+        with self.lock:
+            if self.state != State.LANDING or not self.land_confirmed:
+                raise Refused(f'only in land mode, to stop the motors (state: {self.state.value})')
+            self.disarm_requested = True
+            self.last_retry = 0.0
+            return 'disarming'
 
     def set_speed(self, speed):
         with self.lock:
@@ -300,6 +314,11 @@ class Commander(Node):
                 if not self.armed():
                     self.get_logger().info('Landed and disarmed')
                     self.set_state(State.IDLE)
+                elif self.disarm_requested:
+                    if now - self.last_retry >= COMMAND_RETRY:
+                        self.send_command(
+                            VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0, FORCE_DISARM)
+                        self.last_retry = now
                 elif self.status.nav_state == VehicleStatus.NAVIGATION_STATE_AUTO_LAND:
                     self.land_confirmed = True
                 elif self.land_confirmed:
@@ -331,17 +350,23 @@ class Commander(Node):
             self.set_state(State.FLYING)
         elif elapsed > START_TIMEOUT:
             if self.takeoff_altitude is not None:
-                self.get_logger().error('Could not arm or enter offboard mode. Check the pxh> terminal.')
+                if self.in_offboard() and not self.status.pre_flight_checks_pass:
+                    self.get_logger().error(
+                        'PX4 preflight checks fail in offboard mode, so not arming. Check the pxh> terminal.')
+                else:
+                    self.get_logger().error('Could not arm or enter offboard mode. Check the pxh> terminal.')
                 if self.armed():
                     self.send_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0)
                 self.set_state(State.IDLE)
             else:
                 self.get_logger().error('Could not switch back to offboard. Pilot still has control')
                 self.set_state(State.PILOT)
-        # Offboard mode refuses to start until it has received setpoints for a moment
+        # Offboard mode refuses to start until it has received setpoints for a moment.
+        # Switch to offboard first, then arm only once PX4's checks pass for offboard
         elif elapsed > 1.0 and now - self.last_retry >= COMMAND_RETRY:
-            self.send_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
-            if not self.armed():
+            if not self.in_offboard():
+                self.send_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
+            elif not self.armed() and self.status.pre_flight_checks_pass:
                 self.send_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
             self.last_retry = now
 
@@ -362,9 +387,14 @@ class Commander(Node):
     # ---- PX4 helpers ----
 
     def ready(self):
+        """PX4 has a local position estimate, which offboard flight needs.
+
+        PX4's arming checks (pre_flight_checks_pass) are left to step_starting: PX4 judges them
+        for the mode it is in, and until we switch it to offboard that is usually Hold, which
+        also needs GPS. Indoors, with no GPS, Hold's checks fail though offboard's pass.
+        """
         return (self.position is not None and self.status is not None
-                and self.position.xy_valid and self.position.z_valid
-                and self.status.pre_flight_checks_pass)
+                and self.position.xy_valid and self.position.z_valid)
 
     def armed(self):
         return self.status.arming_state == VehicleStatus.ARMING_STATE_ARMED

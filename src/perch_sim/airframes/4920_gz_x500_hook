@@ -1,0 +1,36 @@
+#!/bin/sh
+#
+# @name Gazebo x500 with the VESPR perching hook
+#
+# @type Quadrotor
+#
+# The X500 with our hook, a RealSense stand-in, and downward optical flow and rangefinder
+# (models/x500_hook). Indoor by default: flies on flow + rangefinder with GPS off, like PX4's
+# 4021_gz_x500_flow. PX4_GPS=1 in the environment turns GPS back on (run_sim.sh sets it from GPS=1).
+#
+# run_sim.sh links this file into PX4's airframes. Settings here are defaults applied after the
+# X500's, so they win, and they aren't saved between runs: switching GPS needs no cleanup.
+
+PX4_SIM_MODEL=${PX4_SIM_MODEL:=x500_hook}
+
+. ${R}etc/init.d-posix/airframes/4001_gz_x500
+
+if [ "$PX4_GPS" = 1 ]
+then
+	echo "x500_hook: GPS on"
+else
+	echo "x500_hook: GPS off, flying on optical flow and rangefinder"
+	param set-default SYS_HAS_GPS 0
+	param set-default SIM_GPS_USED 0
+	param set-default EKF2_GPS_CTRL 0
+fi
+
+# Fly without a ground station
+param set-default NAV_DLL_ACT 0
+
+# The hook and camera make it heavier than the plain x500: measured hover thrust 0.76 (PX4's
+# own estimate in flight). Fixed, not learned: hanging from the branch in land mode, PX4 doesn't
+# know it has landed and learns the lower thrust the branch needs, about 0.5. Taking off from
+# the branch then starts far below hover and can't lift off the hook
+param set-default MPC_THR_HOVER 0.76
+param set-default MPC_USE_HTE 0

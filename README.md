@@ -8,15 +8,21 @@ Mocap lives in its own repo.
 
 ```
 src/
-  perch_perception/
-  perch_flight/         flight control nodes (fly_square test flight)
-  perch_sim/            Gazebo sim docs
-  perch_bringup/
+  perch_flight/         Commander (flies PX4 in offboard), flight_cli, fly_square test flight
+  perch_mission/        mission node: the perch cycle, its planners, sim_mission.sh
+  perch_sim/            Gazebo worlds, the hook drone and its airframe, sim stand-in nodes
+  perch_interfaces/     our action types (Grasp, Perch)
+  perch_perception/     camera capture and branch detection
+  perch_eval/           IMU characterization
+  perch_bringup/        launch files (empty so far)
 docs/system-map/        system architecture (from the FigJam board)
+docs/design/            design notes for each piece (mission, planners, stand-ins, ...)
 docs/hardware/          hardware setup (jetson_pixhawk.md: Jetson ↔ Pixhawk link)
 px4_config/             exported PX4 parameter files
 .devcontainer/          Docker dev environment
 ```
+
+Packages are named `perch_*`; topics keep `/vespr/...` ([docs/NAMING.md](docs/NAMING.md)).
 
 ## Versions
 
@@ -63,6 +69,12 @@ MicroXRCEAgent udp4 -p 8888
 ros2 topic list
 ```
 
-Rebuild after pulling changes: `colcon build --symlink-install && source install/setup.bash`.
+Rebuild after pulling changes: `colcon build --symlink-install && source install/setup.bash`. After a package is renamed or removed (such as the `vespr_*` → `perch_*` restructure), delete `build/`, `install/` and `log/` first.
+
+Run the whole perch mission in the sim, in one terminal (Ctrl+C stops everything):
+
+```bash
+src/perch_mission/scripts/sim_mission.sh
+```
 
 To run the Gazebo sim, see [src/perch_sim/README.md](src/perch_sim/README.md). To fly it from ROS 2, see [src/perch_flight/README.md](src/perch_flight/README.md). To set up the Jetson and Pixhawk, see [docs/hardware/jetson_pixhawk.md](docs/hardware/jetson_pixhawk.md).

@@ -8,6 +8,8 @@
     out to x 1.93. Diameter tapers from 6.4 cm to 3.6 cm.
   Perch zone: limb from x 1.04 to 1.73, diameter 4.9 to 3.9 cm,
     top at z 1.79 to 1.84.
+  perch_point: where to perch, on the limb's centreline at the middle of the perch zone
+    (x 1.384, z 1.802; the top is 2.2 cm above). x along the limb, z up.
   Static. The visual is meshes/branch.obj with Poly Haven's bark_brown_02 (CC0).
 -->
 <sdf version="1.9">
@@ -121,6 +123,10 @@
           </pbr>
         </material>
       </visual>
+    </link>
+    <!-- No collision or visual: a marker that Gazebo reports the pose of (perch_sim mocap_sim) -->
+    <link name="perch_point">
+      <pose>1.3838 0.0000 1.8017 0 -0.07369 0.00000</pose>
     </link>
   </model>
 </sdf>
