@@ -12,7 +12,7 @@ import pytest
 
 cv2 = pytest.importorskip('cv2')
 
-from tiny_dataset import make_tiny_dataset  # noqa: E402
+from tiny_dataset import make_tiny_dataset, remove_labels  # noqa: E402
 
 from perch_perception.training.dataset import (  # noqa: E402
     DatasetError, LeakageError, labeled_frames)
@@ -178,9 +178,7 @@ def test_exporting_a_run_that_does_not_exist_is_an_error(tmp_path, capsys):
 
 def test_checking_with_no_labeled_val_frames_is_an_error(tmp_path):
     dataset = make_tiny_dataset(tmp_path / 'dataset')
-    for row in dataset.read_frames():
-        if row.clip in ('indoor_b', 'outdoor_b'):
-            dataset.label_path(row.frame_id).unlink()
+    remove_labels(dataset, ['indoor_b', 'outdoor_b'])
 
     with pytest.raises(DatasetError, match='no labeled frames in val clips'):
         check_export(dataset, '2026-10-22_320_01', load_config())

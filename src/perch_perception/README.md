@@ -127,6 +127,9 @@ python -m perch_perception.data_collection.record --domain outdoor     # or indo
 Then open http://localhost:8080 on the Mac. Nothing is uploaded while you record: once the
 Jetson is back on Wi-Fi, send the clips with `clip_storage upload` (see Google Drive storage).
 
+A green crosshair marks the center of the live image, to help aim the camera at the branch. Only
+the browser draws it, so it is never in the `.bag` or the `.mp4`.
+
 The recorder runs inside `tmux`, so a dropped ssh connection does not stop it, even in the
 middle of a clip. Log in again with the same `ssh -L` command and run `tmux attach -t record` to
 get its terminal back. Press Ctrl+C there to quit the recorder.
@@ -166,9 +169,9 @@ Several real indoor branches, if you can get them, give a fairer indoor score.
 **A take went wrong?** Press "Mark #0042 bad" before the next Record. Nothing is deleted: the clip
 still uploads, and the training pipeline skips it. Press it again to unmark. If only its start or
 end is wrong, such as a clip stopped too late, mark it bad anyway and note why; later, on the Mac,
-`trim` keeps the good part and unmarks it (see the perception README, Keeping part of a clip). A clip that does not
-end normally stays marked bad by itself: the camera failing, the recorder being killed or the
-battery being pulled.
+`trim` keeps the good part and unmarks it (see the perception README, Keeping part of a clip). A
+clip that does not end normally stays marked bad by itself: the camera failing, the recorder being
+killed or the battery being pulled.
 
 The start time comes from the Jetson's clock, and without internet the Jetson cannot set it.
 Until it reaches the internet, its clock starts at the date its system image was built (June 5,

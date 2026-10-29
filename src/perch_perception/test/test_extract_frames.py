@@ -196,7 +196,7 @@ def test_a_clip_marked_bad_after_it_was_extracted_is_reported_and_kept(tmp_path)
     assert [row.clip for row in dataset.read_clips()] == ['a']
 
 
-def test_bad_clips_are_listed_by_main(tmp_path, capsys, monkeypatch):
+def test_bad_clips_are_listed_by_main(tmp_path, capsys):
     folder = tmp_path / 'bags'
     write_bag(folder, 'a')
     write_details(folder, 'a', bad=True)

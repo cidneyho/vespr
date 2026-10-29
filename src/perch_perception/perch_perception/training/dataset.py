@@ -23,6 +23,7 @@ import csv
 import hashlib
 import json
 import os
+import random
 from dataclasses import astuple, dataclass, fields
 from pathlib import Path
 
@@ -376,6 +377,17 @@ def labeled_frames(dataset, split, domain=None):
         and (domain is None or row.domain == domain)
         and dataset.is_labeled(row.frame_id)
     ]
+
+
+def sample_frames(frames, count, seed):
+    """Return up to count of frames chosen at random without repeats, in their original order.
+
+    A count larger than len(frames) means all of them. The generator is seeded with seed, so
+    the same seed picks the same frames.
+    """
+    # Sorting the picked positions keeps the frames in the order they were given.
+    picked = random.Random(seed).sample(range(len(frames)), min(count, len(frames)))
+    return [frames[position] for position in sorted(picked)]
 
 
 def write_data_yaml(dataset, out_dir, train, val):

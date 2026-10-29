@@ -15,7 +15,7 @@ import pytest
 
 cv2 = pytest.importorskip('cv2')
 
-from tiny_dataset import make_tiny_dataset  # noqa: E402
+from tiny_dataset import make_tiny_dataset, remove_labels  # noqa: E402
 
 from perch_perception.training.dataset import (  # noqa: E402
     Dataset, DatasetError, LeakageError, labeled_frames)
@@ -78,9 +78,7 @@ def test_a_run_is_scored_overall_and_per_domain(tiny_run):
 def test_a_domain_with_no_val_frames_is_skipped(tiny_run, tmp_path):
     original, run_dir = tiny_run
     dataset = Dataset(shutil.copytree(original.root, tmp_path / 'dataset'))
-    for row in dataset.read_frames():
-        if row.clip == 'indoor_b':
-            dataset.label_path(row.frame_id).unlink()
+    remove_labels(dataset, ['indoor_b'])
 
     assert score_run(dataset, run_dir.name, 'indoor', DAY, device='cpu') is None
     rows = evaluate_runs(dataset, [run_dir.name], DAY, device='cpu')
@@ -224,9 +222,7 @@ def test_evaluating_a_run_without_best_weights_is_an_error(tmp_path):
 
 def test_evaluating_with_no_labeled_val_frames_is_an_error(tmp_path):
     dataset = make_tiny_dataset(tmp_path / 'dataset')
-    for row in dataset.read_frames():
-        if row.clip in ('indoor_b', 'outdoor_b'):
-            dataset.label_path(row.frame_id).unlink()
+    remove_labels(dataset, ['indoor_b', 'outdoor_b'])
 
     with pytest.raises(DatasetError, match='no labeled frames in val clips'):
         evaluate_runs(dataset, ['2026-10-22_320_01'], DAY)

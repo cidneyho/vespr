@@ -17,17 +17,16 @@ is imported inside the functions that use it, so the rest of this module loads w
 
 import argparse
 import json
-import random
 import sys
 from datetime import date
 from pathlib import Path
 
 import cv2
 
-from perch_perception.training.contact_sheet import draw_polygons
+from perch_perception.training.contact_sheet import draw_polygons, read_image
 from perch_perception.training.dataset import (
     DEFAULT_DATASET, DOMAINS, Dataset, DatasetError, check_splits, labeled_frames, parse_label,
-    run_files, write_data_yaml)
+    run_files, sample_frames, write_data_yaml)
 
 LABEL_COLOR = (0, 255, 0)  # green, in OpenCV's blue, green, red order
 PREDICTION_COLOR = (0, 0, 255)  # red
@@ -128,11 +127,11 @@ def format_table(rows):
         for row in rows
     ]
     # Each column is as wide as its widest cell. zip(*lines) turns the rows into columns.
-    widths = [max(len(cell) for cell in column) for column in zip(*lines)]
+    widths = [max(len(cell) for cell in column) for column in zip(*lines, strict=True)]
     text = []
     for cells in lines:
         padded = [cell.ljust(width) if column < 2 else cell.rjust(width)
-                  for column, (cell, width) in enumerate(zip(cells, widths))]
+                  for column, (cell, width) in enumerate(zip(cells, widths, strict=True))]
         text.append('  '.join(padded))
     return '\n'.join(text)
 
@@ -146,10 +145,7 @@ def save_overlays(dataset, run, count=20, seed=0, device=None):
     """
     run_dir, weights, image_size = run_files(dataset, run)
     val = labeled_frames(dataset, 'val')
-    # A random sample without repeats, from a generator seeded with `seed`, as on the contact
-    # sheet. Sorting the picked positions keeps the frames in manifest order.
-    picked = random.Random(seed).sample(range(len(val)), min(count, len(val)))
-    frames = [val[position] for position in sorted(picked)]
+    frames = sample_frames(val, count, seed)  # as on the contact sheet
 
     # Imported here, not at the top, so the drone never needs this heavy library.
     from ultralytics import YOLO
@@ -160,9 +156,7 @@ def save_overlays(dataset, run, count=20, seed=0, device=None):
     paths = []
     for row in frames:
         image_path = dataset.image_path(row.frame_id)
-        image = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
-        if image is None:
-            raise DatasetError(f'{image_path} cannot be read as an image')
+        image = read_image(image_path)
         labels = parse_label(dataset.label_path(row.frame_id).read_text())
         # Given the path, Ultralytics loads the frame as training did: three identical channels.
         # rect=False letterboxes it to the export's fixed square input, as in score_run.

@@ -10,14 +10,14 @@ gives the same sheet. It is written to contact_sheet.png in the dataset folder.
 
 import argparse
 import math
-import random
 import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from perch_perception.training.dataset import DEFAULT_DATASET, Dataset, DatasetError, parse_label
+from perch_perception.training.dataset import (
+    DEFAULT_DATASET, Dataset, DatasetError, parse_label, sample_frames)
 
 MASK_COLOR = (0, 255, 0)  # green, in OpenCV's blue, green, red order
 MASK_OPACITY = 0.4
@@ -30,10 +30,7 @@ def draw_polygons(image, polygons, color):
     image is grayscale or BGR. Each polygon is an (N, 2) array of x, y normalized to 0 to 1 by
     the image width and height, as parse_label returns them. The input image is not changed.
     """
-    if image.ndim == 2:
-        drawn = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-    else:
-        drawn = image.copy()
+    drawn = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR) if image.ndim == 2 else image.copy()
     height, width = drawn.shape[:2]
     # Scale normalized coordinates to pixels. fillPoly and polylines want int32 corners.
     corners = [np.round(polygon * [width, height]).astype(np.int32) for polygon in polygons]
@@ -48,7 +45,7 @@ def draw_polygons(image, polygons, color):
     return drawn
 
 
-def _read_image(path):
+def read_image(path):
     """Return the image at path as stored (8-bit grayscale here). Raises DatasetError if not."""
     image = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
     if image is None:
@@ -58,7 +55,7 @@ def _read_image(path):
 
 def _tile(dataset, frame_id, thumb_width, thumb_height):
     """Return one frame shrunk to a thumbnail, its mask drawn on, its frame id written below."""
-    image = _read_image(dataset.image_path(frame_id))
+    image = read_image(dataset.image_path(frame_id))
     try:
         polygons = parse_label(dataset.label_path(frame_id).read_text())
     except DatasetError as error:
@@ -89,12 +86,10 @@ def make_contact_sheet(dataset, count=50, seed=0, columns=10, thumb_width=212):
     if not labeled:
         raise DatasetError(f'{dataset.root} has no labeled frames yet. Import a batch first.')
 
-    # A random sample without repeats, from a generator seeded with `seed`, so the same seed
-    # picks the same frames. Sorting the picked positions puts the tiles in manifest order.
-    picked = random.Random(seed).sample(range(len(labeled)), min(count, len(labeled)))
-    frames = [labeled[position] for position in sorted(picked)]
+    # The same seed picks the same frames, and they stay in manifest order.
+    frames = sample_frames(labeled, count, seed)
 
-    first = _read_image(dataset.image_path(frames[0].frame_id))
+    first = read_image(dataset.image_path(frames[0].frame_id))
     thumb_height = round(first.shape[0] * thumb_width / first.shape[1])
     tile_height = thumb_height + CAPTION_HEIGHT
 

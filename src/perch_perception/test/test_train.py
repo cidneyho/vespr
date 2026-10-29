@@ -13,7 +13,7 @@ import pytest
 
 pytest.importorskip('cv2')
 
-from tiny_dataset import make_tiny_dataset  # noqa: E402
+from tiny_dataset import make_tiny_dataset, remove_labels  # noqa: E402
 
 from perch_perception.training.dataset import (  # noqa: E402
     DatasetError, LeakageError, check_splits)
@@ -21,13 +21,6 @@ from perch_perception.training.train import (  # noqa: E402
     PACKAGE_DIR, git_state, load_config, main, prepare_run, run_name)
 
 DAY = date(2026, 10, 22)
-
-
-def remove_labels(dataset, clips):
-    """Delete the label files of every frame of these clips, so they count as not labeled."""
-    for row in dataset.read_frames():
-        if row.clip in clips:
-            dataset.label_path(row.frame_id).unlink()
 
 
 def test_run_names_count_up_per_day_and_size(tmp_path):

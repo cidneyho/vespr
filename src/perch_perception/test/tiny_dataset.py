@@ -72,3 +72,10 @@ def make_tiny_dataset(root):
     dataset.write_frames(frames)
     dataset.write_splits(CLIP_SPLITS)
     return dataset
+
+
+def remove_labels(dataset, clips):
+    """Delete the label files of every frame of these clips, so they count as not labeled."""
+    for row in dataset.read_frames():
+        if row.clip in clips:
+            dataset.label_path(row.frame_id).unlink()
