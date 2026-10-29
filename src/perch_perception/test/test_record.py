@@ -798,6 +798,14 @@ def test_the_page_has_the_detail_fields_and_the_bad_button(served):
     assert 'id="bad"' in page
 
 
+def test_the_page_draws_a_crosshair_over_the_live_view(served):
+    _, base = served
+
+    page = urllib.request.urlopen(base + '/', timeout=5).read().decode()
+
+    assert 'id="crosshair"' in page
+
+
 def test_posting_stop_cancels_the_request(served):
     recorder, base = served
     recorder.start()

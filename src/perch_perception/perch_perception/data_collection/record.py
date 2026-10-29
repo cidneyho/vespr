@@ -56,8 +56,18 @@ PAGE = """<!doctype html>
 <title>VESPR recorder</title>
 <style>
   body { font-family: sans-serif; background: #111; color: #eee; text-align: center; }
+  #frame { position: relative; display: inline-block; max-width: 100%; line-height: 0; }
   img { max-width: 100%; border: 4px solid #333; }
   img.recording { border-color: #d22; }
+  /* A crosshair over the live view, to help aim the camera. It is drawn by the browser
+     only, so it never reaches the .bag or the .mp4. */
+  #crosshair { position: absolute; inset: 4px; pointer-events: none; }
+  #crosshair div { position: absolute; background: rgba(0, 255, 0, 0.7); }
+  #crosshair .h { left: 0; right: 0; top: 50%; height: 1px; }
+  #crosshair .v { top: 0; bottom: 0; left: 50%; width: 1px; }
+  #crosshair .ring { left: 50%; top: 50%; width: 40px; height: 40px; background: none;
+                     border: 1px solid rgba(0, 255, 0, 0.7); border-radius: 50%;
+                     transform: translate(-50%, -50%); }
   button { font-size: 1.5em; padding: 0.4em 1.5em; margin: 0.6em; }
   #status { font-size: 1.6em; }
   #last { font-size: 1.3em; }
@@ -68,7 +78,10 @@ PAGE = """<!doctype html>
 </style>
 </head>
 <body>
-<img id="view" src="/stream" alt="live camera view">
+<div id="frame">
+  <img id="view" src="/stream" alt="live camera view">
+  <div id="crosshair"><div class="h"></div><div class="v"></div><div class="ring"></div></div>
+</div>
 <div>
   <label>Site <input id="site"></label>
   <label>Branch <input id="branch"></label>
