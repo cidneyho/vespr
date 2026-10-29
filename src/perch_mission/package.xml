@@ -4,7 +4,7 @@
   <name>perch_mission</name>
   <version>0.0.0</version>
   <description>VESPR mission: the mission node, the perch cycle and its flight path planners (docs/design/mission.md, planning.md)</description>
-  <maintainer email="chonodom@gmail.com">Dom Taing</maintainer>
+  <maintainer email="placeholder@gmail.com">Dom Taing</maintainer>
   <license>TODO</license>
 
   <exec_depend>rclpy</exec_depend>

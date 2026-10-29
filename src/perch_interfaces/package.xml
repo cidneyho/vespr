@@ -4,7 +4,7 @@
   <name>perch_interfaces</name>
   <version>0.0.0</version>
   <description>Message, service and action types shared between VESPR packages</description>
-  <maintainer email="chonodom@gmail.com">Dom Taing</maintainer>
+  <maintainer email="placeholder@gmail.com">Dom Taing</maintainer>
   <license>TODO</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
