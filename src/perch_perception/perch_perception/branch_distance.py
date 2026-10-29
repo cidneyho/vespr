@@ -44,14 +44,14 @@ def main():
     pipeline, depth_scale = start_camera()
     clicks = []
 
-    def on_mouse(event, x, y, flags, param):
+    def on_mouse(event, x, y, _flags, _param):  # OpenCV's callback signature
         if event == cv2.EVENT_LBUTTONDOWN:
             clicks.append((x, y))
             if len(clicks) > 2:
                 clicks.pop(0)
 
-    cv2.namedWindow("ir")
-    cv2.setMouseCallback("ir", on_mouse)
+    cv2.namedWindow('ir')
+    cv2.setMouseCallback('ir', on_mouse)
 
     try:
         while True:
@@ -69,22 +69,22 @@ def main():
                 if valid.size > 0:
                     distance_m = float(np.median(valid)) * depth_scale
                     valid_fraction = valid.size / total
-                    text = f"{distance_m:.3f} m   valid {valid_fraction:.0%}"
+                    text = f'{distance_m:.3f} m   valid {valid_fraction:.0%}'
                 else:
-                    text = "no valid depth on this line"
+                    text = 'no valid depth on this line'
                 cv2.putText(view, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
                             0.8, (0, 255, 0), 2)
 
-            cv2.imshow("ir", view)
+            cv2.imshow('ir', view)
             key = cv2.waitKey(1) & 0xFF
-            if key == ord("q"):
+            if key == ord('q'):
                 break
-            if key == ord("c"):
+            if key == ord('c'):
                 clicks.clear()
     finally:
         pipeline.stop()
         cv2.destroyAllWindows()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

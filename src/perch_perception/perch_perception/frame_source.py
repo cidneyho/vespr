@@ -9,8 +9,9 @@ Y down, Z forward) with its origin at the optical center of the image stream.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator, NamedTuple, Optional, Tuple
+from typing import NamedTuple
 
 import numpy as np
 
@@ -30,15 +31,15 @@ class Intrinsics:
     cx: float
     cy: float
     distortion_model: str
-    distortion_coeffs: Tuple[float, ...]
+    distortion_coeffs: tuple[float, ...]
 
 
 @dataclass(frozen=True)
 class ImuSample:
     """One accelerometer and gyroscope reading."""
 
-    accel: Tuple[float, float, float]  # m/s^2
-    gyro: Tuple[float, float, float]  # rad/s
+    accel: tuple[float, float, float]  # m/s^2
+    gyro: tuple[float, float, float]  # rad/s
     timestamp: float  # seconds
 
 
@@ -53,7 +54,7 @@ class Frame(NamedTuple):
     depth: np.ndarray  # H x W float32 meters; 0 means unknown, not 0 m
     intrinsics: Intrinsics  # of the image stream; depth shares them
     timestamp: float  # seconds
-    imu: Optional[ImuSample]  # None when the source has no IMU
+    imu: ImuSample | None  # None when the source has no IMU
 
 
 def depth_to_meters(raw_depth, depth_scale):
@@ -73,8 +74,11 @@ class FrameSource(ABC):
     def frames(self) -> Iterator[Frame]:
         """Yield frames until the source ends."""
 
-    def close(self):
-        """Release the camera or file. Safe to call more than once."""
+    def close(self):  # noqa: B027  (an intentional no-op default)
+        """Release the camera or file. Safe to call more than once.
+
+        The default does nothing, for sources that hold nothing to release.
+        """
 
     def __iter__(self):
         return self.frames()
