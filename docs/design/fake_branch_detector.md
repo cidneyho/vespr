@@ -22,7 +22,7 @@ The fake detector uses the drone model's real camera mount, read from Gazebo, so
 
 - **Camera:** an Intel RealSense D435i, as on the real drone. PX4 has no RealSense model, so `x500_hook` gets a Gazebo RGB-D camera with the D435i's colour view: 69° × 42°, 30 Hz, depth aligned to colour. It renders at 1280 × 720, a D435i mode with the same view as 1920 × 1080 that is much cheaper for Gazebo to render.
 - **Mount:** the real RealSense goes where PX4's `x500_depth` mounts its OakD-Lite: `camera_link` fixed to `base_link` at (0.12, 0.03, 0.242) m, facing straight ahead.
-- **Where it's set:** the `drone.camera` block in `perch_flight/config/hook.yaml`. `perch_sim/scripts/make_hook_model.py` builds the camera into the model from it, alongside the hook. Change the mount there and rerun the script.
+- **Where it's set:** the `drone.camera` block in `perch_sim/config/x500_hook.yaml`. `perch_sim/scripts/make_hook_model.py` builds the camera into the model from it, alongside the hook. Change the mount there and rerun the script.
 - **Images:** Gazebo publishes `/camera/image`, `/camera/depth_image`, `/camera/points` and `/camera/camera_info`, which the camera mock (a later step) will bridge for perception.
 
 ## When the branch counts as "in view"

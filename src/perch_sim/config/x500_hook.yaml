@@ -1,0 +1,59 @@
+# The x500_hook sim model: the hook on top of the drone, its sensors, and the drone geometry
+# they are measured from. The hook is a ring on a post straight up from the centre of the drone.
+# The back half of the ring is fixed; the front half is a gate that swings round the ring to close it.
+#
+# make_hook_model.py builds models/x500_hook from this file. After changing anything here, run
+#   python3 src/perch_sim/scripts/make_hook_model.py
+# and restart the sim.
+#
+# The mission keeps its own copy of the hook's position: capture_x, capture_y, capture_z in
+# perch_mission/config/mission.yaml must be the centre of the hook's hole, (0, 0, hook.height).
+# make_hook_model.py warns when they differ.
+hook:
+  # PLACEHOLDER: replace with the real hook
+  hole_diameter: 0.10   # m, inside diameter of the hook's hole
+  height: 0.30          # m, from the drone's reference point up to the centre of the hole
+  # Which way the hook's opening faces, deg clockwise from the drone's nose seen from above:
+  # 0 = forward, 90 = right, 180 = back, 270 = left.
+  # The drone yaws so this side leads on the approach.
+  facing_deg: 0.0
+  wire_diameter: 0.006  # m, thickness of the hook's ring
+  close_time: 1.0       # s for the gate to swing closed
+drone:
+  # The drone's reference point is the point PX4 reports as its position.
+  # Sim X500: the body origin, 0.24 m above the ground when it sits on its legs.
+  reference_height: 0.24  # m above the ground at the start point
+  prop_top: 0.07          # m, highest point of props and frame above the reference point
+  # Intel RealSense D435i, mounted where PX4's x500_depth mounts its OakD-Lite.
+  # Position of the camera's centre from the reference point, body frame (x forward, y left, z up).
+  # x500_depth gives (0.12, 0.03, 0.242) from its model origin on the ground, which is
+  # 0.24 m below the reference point, so the camera is level with the body
+  camera:
+    x: 0.12
+    y: 0.03
+    z: 0.002
+    tilt_up_deg: 0.0      # deg, 0 = looking straight ahead
+    # D435i colour stream: 69 x 42 deg. 1280 x 720 has the same view as 1920 x 1080 and
+    # renders much faster in Gazebo
+    horizontal_fov_deg: 69.0
+    width: 1280
+    height: 720
+    rate: 30.0            # Hz
+    near: 0.1             # m, closest and furthest the sim renders
+    far: 10.0
+  # PLACEHOLDER mounts. Replace with the real positions.
+  # Both sit against the underside of the frame's bottom plate, 0.047 m below the reference
+  # point (measured from PX4's x500 mesh). PX4's x500_flow hangs them lower, in mid-air.
+  # Optical flow sensor, looking down. Position of its centre from the reference point, body
+  # frame. Its housing is 0.01 m tall
+  flow:
+    x: 0.03
+    y: 0.0
+    z: -0.052
+  # Rangefinder (single-beam lidar), looking down. Its box is 0.02 m tall
+  rangefinder:
+    x: 0.0
+    y: 0.0
+    z: -0.057
+    min_range: 0.1        # m
+    max_range: 100.0      # m

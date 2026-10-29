@@ -30,8 +30,8 @@ mission:
       settle_time: 0.5
     approach:
       capture_x: 0.0          # where the branch should end up in base_link, m: the hook hole
-      capture_y: 0.0
-      capture_z: 0.30
+      capture_y: 0.0          # must match the hook in perch_sim/config/x500_hook.yaml: (0, 0, hook.height).
+      capture_z: 0.30         # make_hook_model.py warns when they differ
       standoff_back: 1.0      # standoff point from the capture point, m. The camera sits 0.30 m
                               # below the capture point and sees 21 deg up: at 1.0 m the branch
                               # is 18.7 deg up, still in view

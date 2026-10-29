@@ -86,7 +86,7 @@ Board state 3: "hover, yaw slowly, wait for `branch_pose`".
 
 ## Phase 3: approach and perch
 
-**Capture point:** where the branch should be, relative to `base_link`, at the moment of grasping. For the sim hook that is the centre of the hook's hole, 0.30 m straight above the body (from `hook.yaml`).
+**Capture point:** where the branch should be, relative to `base_link`, at the moment of grasping. For the sim hook that is the centre of the hook's hole, 0.30 m straight above the body: `hook.height` in `perch_sim/config/x500_hook.yaml`, copied by hand into the approach's `capture_z` in `mission.yaml` (`make_hook_model.py` warns if they differ).
 
 **Standoff point:** a spot the drone flies to first, from which the branch is still in the camera's view. It's set by how far back and down from the capture point the drone waits:
 - **Hook** (opening facing forward): straight back, same height, so the drone then flies forward into the branch.

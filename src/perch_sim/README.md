@@ -89,7 +89,7 @@ Both worlds have a speckled floor, `perch_floor`, because optical flow can't tra
 GPS=1 ~/vespr/src/perch_sim/scripts/run_sim.sh perch_rod gz_x500_hook  # GPS on, as outdoors
 ```
 
-The model is generated from `hook.yaml` by [scripts/make_hook_model.py](scripts/make_hook_model.py). Design: [docs/design/flow_rangefinder.md](../../docs/design/flow_rangefinder.md).
+The model is generated from [config/x500_hook.yaml](config/x500_hook.yaml) by [scripts/make_hook_model.py](scripts/make_hook_model.py). Design: [docs/design/flow_rangefinder.md](../../docs/design/flow_rangefinder.md).
 
 **Hover thrust.** The airframe fixes `MPC_THR_HOVER` at 0.76, PX4's own in-flight estimate for this drone (the plain X500 uses 0.60), and turns hover-thrust learning off (`MPC_USE_HTE 0`). With learning on, hanging from the branch in land mode taught PX4 about 0.5, and it then couldn't lift off the hook. 0.76 is the sim drone's value: measure the real drone's from a hover log.
 

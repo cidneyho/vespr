@@ -10,7 +10,7 @@ Make the sim hook drone fly the way the real one will indoors: on optical flow a
 
 | Piece | Change |
 |---|---|
-| `x500_hook` model | Gains a downward optical flow sensor and a downward rangefinder, mounted as on PX4's `x500_flow`. Built by `make_hook_model.py` from `hook.yaml` |
+| `x500_hook` model | Gains a downward optical flow sensor and a downward rangefinder, mounted as on PX4's `x500_flow`. Built by `make_hook_model.py` from `perch_sim/config/x500_hook.yaml` |
 | Airframe | Our own PX4 airframe, `airframes/4920_gz_x500_hook`: PX4's X500 (4001), GPS off unless `GPS=1`, no ground station needed |
 | `run_sim.sh` | Links our airframes into PX4 and starts `x500_hook` with 4920. New `GPS` option, off by default |
 | Perch worlds | The plain floor is now `perch_floor`, a textured floor that flow can track. Built by `make_floor.py` |
@@ -26,7 +26,7 @@ Both copy PX4's `x500_flow`, so PX4's simulation bridge finds them by the names 
 | Optical flow | PX4's `optical_flow` model: a 100 × 100 px downward camera, 42° view, plus PX4's flow sensor | `flow_link` | 3 cm forward, 10 cm down, looking down | 50 Hz |
 | Rangefinder | A single-beam lidar, 0.1 to 100 m, like PX4's LW20 setup | `lidar_sensor_link`, sensor `lidar` | 5 cm down, looking down | 50 Hz |
 
-- The mounts are placeholders, in the `drone.flow` and `drone.rangefinder` blocks of `hook.yaml`, like the camera's. Replace them with the real positions when known.
+- The mounts are placeholders, in the `drone.flow` and `drone.rangefinder` blocks of `perch_sim/config/x500_hook.yaml`, like the camera's. Replace them with the real positions when known.
 - Both sit under the body. The hook is on top and the camera in front, so nothing blocks them.
 
 ## Where the readings appear in ROS
