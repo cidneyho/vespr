@@ -51,7 +51,7 @@ Sensors send data into ROS and actuators receive commands from it, each through 
 | Drone (vision) | `/vespr/perception/odom` | `nav_msgs/msg/Odometry` |
 | Drone (mocap) | `/mocap/vespr/pose` | `geometry_msgs/msg/PoseStamped` |
 | Branch (mocap) | `/mocap/branch/pose` | `geometry_msgs/msg/PoseStamped` |
-| Error | `/vespr/eval/pose_error` | `vespr_interfaces/msg/PoseError` |
+| Error | `/vespr/eval/pose_error` | `perch_interfaces/msg/PoseError` |
 
 ## Legs: one topic, one service, one action
 
@@ -61,13 +61,13 @@ The worked example for classifying any subsystem.
 |---|---|---|---|---|
 | TOPIC | `/vespr/legs/state` | `sensor_msgs/msg/JointState` (or a small custom msg) | Where each leg is, published all the time. Mission, recorder and RViz can all listen. | What does it report continuously? |
 | SERVICE | `/vespr/legs/set_enabled` | `std_srvs/srv/SetBool` | Switch the motor drivers on or off. Instant yes/no answer. Also the software stop. | What can I switch or ask instantly? |
-| ACTION | `/vespr/legs/grasp` (and `release`) | `vespr_interfaces/action/Grasp` | Close until the branch is gripped. Takes seconds, reports progress, can be cancelled. | What do I ask it to do that takes time? |
+| ACTION | `/vespr/legs/grasp` (and `release`) | `perch_interfaces/action/Grasp` | Close until the branch is gripped. Takes seconds, reports progress, can be cancelled. | What do I ask it to do that takes time? |
 
 The N20 motors do not speak ROS. The ESP32 does the electrical work, and `legs_bridge` is the only program that talks to it.
 
 ## Custom types
 
-Only three types need a definition of our own, and all three live in one package, `vespr_interfaces`:
+Only three types need a definition of our own, and all three live in one package, `perch_interfaces`:
 
 - `PoseError` (msg): evaluator output.
 - `Grasp` (action): legs grasp / release.

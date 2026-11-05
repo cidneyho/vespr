@@ -31,7 +31,7 @@ Markdown copy of the team's FigJam board, split into one file per topic so you o
 
 ## Package names
 
-Packages are named `vespr_*`: `vespr_bringup`, `vespr_interfaces`, `vespr_perception`, `vespr_flight`, `vespr_legs`, `vespr_eval`. The `perch_*` packages currently in `src/` are temporary test code; name new packages, nodes and topics with `vespr`.
+Packages are named `perch_*`: `perch_bringup`, `perch_interfaces`, `perch_perception`, `perch_flight`, `perch_mission`, `perch_legs`, `perch_eval`, `perch_sim`. Topics and actions keep the `/vespr/...` names. Details: [NAMING.md](../NAMING.md) section 6.
 
 ## Related docs
 

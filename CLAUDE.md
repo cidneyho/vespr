@@ -10,4 +10,4 @@ Perching drone. ROS 2 Jazzy workspace for the Jetson; mocap lives in a separate 
 
 ## Package names
 
-Use `vespr` for packages, nodes and topics (`vespr_flight`, `/vespr/legs/state`). The `perch_*` packages in `src/` are temporary test code, not the naming to copy.
+Packages use the `perch_` prefix (`perch_flight`, `perch_mission`, `perch_sim`). Topic and action names keep `/vespr/...` (`/vespr/legs/state`, `/vespr/perch`); don't rename them. Package list: [docs/NAMING.md](docs/NAMING.md) section 6.

@@ -28,7 +28,7 @@ OptiTrack's own software (Motive) is Windows-only and its Linux SDK stops at 2D 
 | Repo | Runs on | Contents |
 |---|---|---|
 | Mocap repo | ground PC | Ends at layer 8. Camera capture, calibration, marker tracking, rigid bodies, one ROS node at the edge: `mocap_node`. Knows nothing about drones. |
-| VESPR repo (this one) | Jetson | `vespr_bringup` (launch), `vespr_interfaces` (our types), `vespr_perception`, `vespr_flight`, `vespr_legs`, `vespr_eval`. Flies without mocap running. |
+| VESPR repo (this one) | Jetson | `perch_bringup` (launch), `perch_interfaces` (our types), `perch_perception`, `perch_flight`, `perch_mission`, `perch_legs`, `perch_eval`, `perch_sim`. Flies without mocap running. |
 
 The contract between them: **2 topics · 1 type · 1 frame · 1 clock.**
 

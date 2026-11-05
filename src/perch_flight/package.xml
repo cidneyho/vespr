@@ -4,7 +4,7 @@
   <name>perch_flight</name>
   <version>0.0.0</version>
   <description>Flight control nodes for the X500, talking to PX4 over ROS 2</description>
-  <maintainer email="chonodom@gmail.com">Dom Taing</maintainer>
+  <maintainer email="placeholder@gmail.com">Dom Taing</maintainer>
   <license>TODO</license>
 
   <exec_depend>rclpy</exec_depend>

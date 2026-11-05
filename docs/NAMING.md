@@ -89,14 +89,14 @@ Conventions referenced: REP 103 (units, axes), REP 105 (frames), REP 144 (packag
 | topic | `/vespr/camera/imu` | `sensor_msgs/msg/Imu` | realsense_driver → perception | Decided |
 | topic | `/vespr/perception/branch_pose` | `geometry_msgs/msg/PoseStamped` | branch_detector → mission, evaluator | Proposed |
 | topic | `/vespr/perception/odom` | `nav_msgs/msg/Odometry` | vio → mission, evaluator | Proposed |
-| topic | `/vespr/eval/pose_error` | `vespr_interfaces/msg/PoseError` | evaluator → bag, plots | Proposed |
+| topic | `/vespr/eval/pose_error` | `perch_interfaces/msg/PoseError` | evaluator → bag, plots | Proposed |
 | topic | `/vespr/eval/branch_pose_truth` | not specified | evaluator | Proposed |
 | topic | `/vespr/mission/state` | not specified | mission → bag, operator | Proposed |
 | topic | `/vespr/legs/state` | `sensor_msgs/msg/JointState` (or a small custom msg) | legs_bridge → mission, bag, RViz | Proposed |
 | service | `/vespr/legs/set_enabled` | `std_srvs/srv/SetBool` | mission, operator → legs_bridge | Proposed |
-| action | `/vespr/legs/grasp` | `vespr_interfaces/action/Grasp` | mission → legs_bridge | Proposed |
+| action | `/vespr/legs/grasp` | `perch_interfaces/action/Grasp` | mission → legs_bridge | Proposed |
 | action | `/vespr/legs/release` | mirrors Grasp (type not yet defined) | mission → legs_bridge | Proposed |
-| action | `/vespr/perch` | `vespr_interfaces/action/Perch` | operator → mission | Proposed |
+| action | `/vespr/perch` | `perch_interfaces/action/Perch` | operator → mission | Proposed |
 | topic | `/mocap/vespr/pose` | `geometry_msgs/msg/PoseStamped` | mocap_node → evaluator (and mission in stage 1) | Proposed |
 | topic | `/mocap/branch/pose` | `geometry_msgs/msg/PoseStamped` | mocap_node → evaluator | Proposed |
 
@@ -125,13 +125,13 @@ Some PX4 names carry a version suffix on recent firmware (for example `_v1`). Co
 
 | Node name | Package | Job | Status |
 |---|---|---|---|
-| `branch_detector` | `vespr_perception` | images → branch pose | Proposed |
-| `vio` | `vespr_perception` | visual odometry → drone pose | Proposed |
-| `mission` | `vespr_flight` | state machine; only node that commands actuators | Proposed |
-| `legs_bridge` | `vespr_legs` | serial ↔ ROS translator for the ESP32 | Proposed |
-| `evaluator` | `vespr_eval` | vision vs mocap, relative pose first | Proposed |
+| `branch_detector` | `perch_perception` | images → branch pose | Proposed |
+| `vio` | `perch_perception` | visual odometry → drone pose | Proposed |
+| `mission` | `perch_mission` | state machine; only node that commands actuators | Proposed |
+| `legs_bridge` | `perch_legs` | serial ↔ ROS translator for the ESP32 | Proposed |
+| `evaluator` | `perch_eval` | vision vs mocap, relative pose first | Proposed |
 | `bag_recorder` | not specified | every topic to a rosbag on the NVMe | Proposed |
-| `realsense_driver` | third-party (`realsense2_camera`) | launched from `vespr_bringup` | Third-party |
+| `realsense_driver` | third-party (`realsense2_camera`) | launched from `perch_bringup` | Third-party |
 | `micro_xrce_agent` | third-party | PX4 bridge; we run it, we do not write it | Third-party |
 | `mocap_node` | mocap repo | the only ROS node in the mocap repo | Proposed |
 
@@ -139,16 +139,18 @@ Some PX4 names carry a version suffix on recent firmware (for example `_v1`). Co
 
 ## 6. Packages and repos
 
-**VESPR repo (on the Jetson).** All our packages use the `vespr_` prefix (Proposed):
+**VESPR repo (on the Jetson).** All our packages use the `perch_` prefix (Decided, 2026-10-28). Topic and action names keep `/vespr/...`; only package names use `perch_`:
 
 | Package | Contents |
 |---|---|
-| `vespr_bringup` | launch files only; sets namespaces and remaps |
-| `vespr_interfaces` | our custom types, and only those |
-| `vespr_perception` | branch detector, VIO |
-| `vespr_flight` | mission logic |
-| `vespr_legs` | legs bridge |
-| `vespr_eval` | vision vs mocap evaluation |
+| `perch_bringup` | launch files only; sets namespaces and remaps |
+| `perch_interfaces` | our custom types, and only those |
+| `perch_perception` | branch detector, VIO |
+| `perch_flight` | `Commander`, which flies PX4 in offboard mode, and the tools built on it (`flight_cli`, `fly_square`) |
+| `perch_mission` | mission node, perch cycle, flight path planners |
+| `perch_legs` | legs bridge (not written yet) |
+| `perch_sim` | Gazebo worlds, models, airframes, and the sim-only stand-in nodes (`mocap_sim`, `fake_branch_detector`, `fake_vio`, `legs_bridge_sim`) |
+| `perch_eval` | vision vs mocap evaluation |
 
 **Mocap repo (on the ground PC).** Separate repo, knows nothing about drones. Its only ROS-facing piece is `mocap_node`. Raw session data lives under `~/panoptes-data/sessions`.
 
@@ -158,13 +160,13 @@ Some PX4 names carry a version suffix on recent firmware (for example `_v1`). Co
 
 ## 7. Interface types (CamelCase)
 
-Reuse standard types first. Only three custom types exist, all in `vespr_interfaces` (Proposed):
+Reuse standard types first. Only three custom types exist, all in `perch_interfaces` (Proposed):
 
 | Type | File |
 |---|---|
-| `vespr_interfaces/msg/PoseError` | `vespr_interfaces/msg/PoseError.msg` |
-| `vespr_interfaces/action/Grasp` | `vespr_interfaces/action/Grasp.action` |
-| `vespr_interfaces/action/Perch` | `vespr_interfaces/action/Perch.action` |
+| `perch_interfaces/msg/PoseError` | `perch_interfaces/msg/PoseError.msg` |
+| `perch_interfaces/action/Grasp` | `perch_interfaces/action/Grasp.action` |
+| `perch_interfaces/action/Perch` | `perch_interfaces/action/Perch.action` |
 
 Adding a fourth custom type is a team decision, not a coding decision.
 
@@ -190,7 +192,7 @@ Rules:
 
 ## 9. Launch-file naming and remaps
 
-- Code subscribes to short names (`branch_pose`, `odom`). The launch file in `vespr_bringup` sets the namespace and remaps.
+- Code subscribes to short names (`branch_pose`, `odom`). The launch file in `perch_bringup` sets the namespace and remaps.
 - Mocap phase-out is one remap of the mission node's "drone pose" input:
   - Stages 1 and 2: remap to `/mocap/vespr/pose`
   - Stages 3 and 4: remap to `/vespr/perception/odom`
@@ -204,13 +206,13 @@ Neither source specifies file names beyond packages and types. These defaults fo
 
 | Thing | Convention | Example |
 |---|---|---|
-| Package directory | same as package name | `src/vespr_perception/` |
-| Python node file | snake_case, matches node name | `vespr_perception/vespr_perception/branch_detector.py` |
-| C++ node file | snake_case, matches node name | `vespr_legs/src/legs_bridge.cpp` |
-| Launch file | snake_case, `.launch.py` | `vespr_bringup/launch/vespr.launch.py` |
-| Parameter file | snake_case, `.yaml`, in `config/` | `vespr_bringup/config/realsense.yaml` |
-| Interface file | CamelCase, in `msg/`, `srv/`, `action/` | `vespr_interfaces/action/Grasp.action` |
-| Test file | `test_` + module name | `vespr_eval/test/test_evaluator.py` |
+| Package directory | same as package name | `src/perch_perception/` |
+| Python node file | snake_case, matches node name | `perch_perception/perch_perception/branch_detector.py` |
+| C++ node file | snake_case, matches node name | `perch_legs/src/legs_bridge.cpp` |
+| Launch file | snake_case, `.launch.py` | `perch_bringup/launch/vespr.launch.py` |
+| Parameter file | snake_case, `.yaml`, in `config/` | `perch_bringup/config/realsense.yaml` |
+| Interface file | CamelCase, in `msg/`, `srv/`, `action/` | `perch_interfaces/action/Grasp.action` |
+| Test file | `test_` + module name | `perch_eval/test/test_evaluator.py` |
 | Parameters | snake_case, SI units, no unit suffix | `confidence_threshold`, `standoff_distance` |
 | Rosbag | one bag per flight, named by date and test ID (**source**); suggested format `YYYY-MM-DD_<test_id>` (gap-fill) | `2026-10-20_approach_03` |
 
@@ -251,6 +253,6 @@ Also unresolved inside the poster: mission reads `/fmu/out/vehicle_local_positio
 1. Look up the name in this file first. If it exists, use it exactly.
 2. If it does not exist, derive it from the six rules in section 1 and the file defaults in section 10, then tell the user it is a new name that is not yet in this file.
 3. Never rename a Third-party name.
-4. Never add a custom type to `vespr_interfaces` without the user confirming.
-5. Never put a namespace in node source code. Namespaces live in `vespr_bringup` launch files.
+4. Never add a custom type to `perch_interfaces` without the user confirming.
+5. Never put a namespace in node source code. Namespaces live in `perch_bringup` launch files.
 6. If a name touches anything in section 12, stop and ask instead of picking one.

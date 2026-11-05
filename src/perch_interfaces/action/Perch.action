@@ -1,0 +1,14 @@
+# Run the perch cycle: fly to a position, find a branch, perch on it, rest, leave, land.
+# Served by the mission node on /vespr/perch.
+# Goal: where to go, in the flight commander's frame (m from the takeoff spot), and how long to stay
+float32 north
+float32 east
+float32 altitude
+float32 heading       # deg, 0 = north, 90 = east. Faced on arrival, as a first guess at the branch
+float32 perch_time    # s to rest on the branch before leaving
+---
+bool success          # perched and came back down
+string state          # where it ended: "land" on success, else the state it aborted in
+string message        # why it aborted, or a short summary
+---
+string state          # the current state
