@@ -5,12 +5,21 @@
 # Our vehicles use their own airframe from airframes/ when there is one (else PX4's plain X500).
 # gz_x500_hook flies indoors on optical flow and its rangefinder; GPS=1 turns GPS back on:
 #   GPS=1 run_sim.sh perch_rod gz_x500_hook
+# Each run starts from PX4's default parameters. PX4 otherwise keeps every parameter it saved
+# last run, including magnetometer offsets it learns in flight: Gazebo's magnetometer has no
+# offset, so the saved ones turn the heading by several degrees (perch_eval, 2026-11-05).
+# KEEP_PARAMS=1 keeps them, e.g. after setting a parameter by hand to use in the next run.
 set -euo pipefail
 
 WORLD=${1:-perch_rod}
 VEHICLE=${2:-gz_x500}
 PERCH_SIM=$(cd "$(dirname "$0")/.." && pwd)
 PX4_DIR=${PX4_DIR:-$HOME/PX4-Autopilot}
+
+if [ -z "${KEEP_PARAMS:-}" ]; then
+  rm -f "$PX4_DIR"/build/px4_sitl_default/rootfs/parameters.bson \
+        "$PX4_DIR"/build/px4_sitl_default/rootfs/parameters_backup.bson
+fi
 
 # PX4 only loads worlds from its own worlds directory, so link ours in
 for world in "$PERCH_SIM"/worlds/*.sdf; do
@@ -32,6 +41,11 @@ if [ -f "$PERCH_SIM/models/$MODEL/model.sdf" ]; then
   for airframe in "$PERCH_SIM"/airframes/*; do
     ln -sf "$airframe" build/px4_sitl_default/etc/init.d-posix/airframes/
   done
+  # Our Gazebo plugins (gz_plugins/), built against PX4's build: the flow sensor
+  PLUGINS=build/px4_sitl_default/perch_gz_plugins
+  cmake -S "$PERCH_SIM/gz_plugins/optical_flow" -B "$PLUGINS/optical_flow" -DPX4_DIR="$PX4_DIR" > /dev/null
+  cmake --build "$PLUGINS/optical_flow" > /dev/null
+  export GZ_SIM_SYSTEM_PLUGIN_PATH="$PX4_DIR/$PLUGINS/optical_flow${GZ_SIM_SYSTEM_PLUGIN_PATH:+:$GZ_SIM_SYSTEM_PLUGIN_PATH}"
   AIRFRAME=4001
   for airframe in "$PERCH_SIM"/airframes/*_"$VEHICLE"; do
     if [ -e "$airframe" ]; then AIRFRAME=$(basename "$airframe" | cut -d_ -f1); fi

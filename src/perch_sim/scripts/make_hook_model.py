@@ -29,8 +29,9 @@ RealSense D435i's colour view, on link camera_link fixed to base_link. Gazebo pu
 on /camera/image, /camera/depth_image, /camera/points and /camera/camera_info.
 
 The flow and rangefinder blocks add a downward optical flow sensor and a downward single-beam
-lidar, built as on PX4's x500_flow. PX4's simulation bridge finds them by name (flow_link,
-and lidar_sensor_link with sensor lidar), so keep those names. run_sim.sh starts this model
+lidar, built as on PX4's x500_flow, the flow sensor being our own (gz_plugins/optical_flow).
+PX4's simulation bridge finds them by name (flow_link with sensor optical_flow, and
+lidar_sensor_link with sensor lidar), so keep those names. run_sim.sh starts this model
 with PX4's flow airframe, which flies on them with GPS off.
 """
 import math
@@ -153,17 +154,46 @@ def camera_xml(camera):
 
 
 def flow_xml(flow):
-    """PX4's optical_flow model (downward camera + flow sensor, link flow_link), fixed to base_link."""
+    """Downward flow camera + flow sensor on flow_link, fixed to base_link: PX4's optical_flow
+    model, but with our flow sensor (gz_plugins/optical_flow, type perch_optical_flow), which
+    run_sim.sh builds and puts on Gazebo's plugin path."""
     xyz = ' '.join(f'{float(flow[k]):.5f}' for k in ('x', 'y', 'z'))
+    shift_only = 'true' if flow.get('shift_only', True) else 'false'
     return f'''    <!-- Optical flow, looking down. PX4 reads /link/flow_link/sensor/optical_flow/optical_flow -->
-    <include merge="true">
-      <uri>model://optical_flow</uri>
+    <link name="flow_link">
       <pose relative_to="base_link">{xyz} 0 0 0</pose>
-    </include>
+      <inertial>
+        <pose>0 0 -0.005 0 0 0</pose>
+        <mass>0.050</mass>
+        <inertia><ixx>0.00004</ixx><iyy>0.00004</iyy><izz>0.00004</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+      <visual name="flow_visual">
+        <geometry><box><size>0.034 0.034 0.01</size></box></geometry>
+        <material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material>
+      </visual>
+      <!-- As PX4's optical_flow model: 100 x 100 at 50 Hz, 42 deg wide -->
+      <sensor name="flow_camera" type="camera">
+        <pose>0 0 0 0 1.5707 0</pose>
+        <camera>
+          <horizontal_fov>0.733038</horizontal_fov>
+          <image><width>100</width><height>100</height></image>
+          <clip><near>0.1</near><far>30</far></clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>50</update_rate>
+      </sensor>
+      <sensor name="optical_flow" type="custom" gz:type="perch_optical_flow">
+        <always_on>1</always_on>
+        <update_rate>50</update_rate>
+      </sensor>
+    </link>
     <joint name="optical_flow_joint" type="fixed">
       <parent>base_link</parent>
       <child>flow_link</child>
     </joint>
+    <plugin filename="PerchOpticalFlowSystem" name="perch_sim::OpticalFlowSystem">
+      <shift_only>{shift_only}</shift_only>
+    </plugin>
 '''
 
 
