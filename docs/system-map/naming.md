@@ -24,7 +24,7 @@ REP 103 / REP 105.
 1. snake_case everywhere (only type names are CamelCase).
 2. System, then subsystem: `/vespr/legs/state`, `/mocap/...`.
 3. Nouns for data, verbs for services and actions.
-4. Keep third-party names (`/fmu/out/vehicle_status`).
+4. Keep third-party names (`/fmu/out/vehicle_status_v1`).
 5. Short names in code; the launch file adds the namespace.
 6. No units in names (SI always; frame goes in the header).
 

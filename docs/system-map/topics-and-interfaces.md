@@ -26,7 +26,7 @@ Sensors send data into ROS and actuators receive commands from it, each through 
 | we publish | `/fmu/in/vehicle_command` | one-off commands: arm, switch mode, land |
 | we publish | `/fmu/in/vehicle_visual_odometry` | an outside pose for PX4 to fuse: vision (stage 3) |
 | we subscribe | `/fmu/out/vehicle_odometry` | PX4's best estimate of pose and velocity |
-| we subscribe | `/fmu/out/vehicle_status` | armed or not, flight mode, failsafe state |
+| we subscribe | `/fmu/out/vehicle_status_v1` | armed or not, flight mode, failsafe state |
 | we subscribe | `/fmu/out/vehicle_command_ack` | whether PX4 accepted the last command |
 | we subscribe | `/fmu/out/vehicle_land_detected` | on the ground or in the air |
 | we subscribe | `/fmu/out/distance_sensor` | the rangefinder |

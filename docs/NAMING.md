@@ -21,7 +21,7 @@ Single reference for every name in the VESPR repo: ROS 2 topics, services, actio
 3. **Nouns for data, verbs for requests.** A topic is a thing. Services and actions are verbs, because they ask for something.
    `state` (topic) · `set_enabled` (service) · `grasp` (action)
 4. **Keep third-party names.** PX4's `/fmu` names and the RealSense driver's sub-names stay exactly as shipped, so their docs and examples still apply.
-   `/fmu/out/vehicle_status`
+   `/fmu/out/vehicle_status_v1`
 5. **Short names in code.** Nodes use the short name (`branch_pose`). The launch file adds the namespace and does any remapping, so a rename never touches a node's source.
    `namespace="vespr/perception"`
 6. **No units in names.** Always metres, radians, seconds (SI, REP 103). The frame goes in the message header, not the name.
@@ -110,7 +110,7 @@ Conventions referenced: REP 103 (units, axes), REP 105 (frames), REP 144 (packag
 | we publish | `/fmu/in/vehicle_visual_odometry` | outside pose for PX4 to fuse (vision, stage 3) |
 | we subscribe | `/fmu/out/vehicle_odometry` | PX4's pose and velocity estimate |
 | we subscribe | `/fmu/out/vehicle_local_position` | listed in poster box 03 as what mission reads |
-| we subscribe | `/fmu/out/vehicle_status` | armed, flight mode, failsafe |
+| we subscribe | `/fmu/out/vehicle_status_v1` | armed, flight mode, failsafe |
 | we subscribe | `/fmu/out/vehicle_command_ack` | whether PX4 accepted the last command |
 | we subscribe | `/fmu/out/vehicle_land_detected` | on ground or in air |
 | we subscribe | `/fmu/out/distance_sensor` | the rangefinder |
