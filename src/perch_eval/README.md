@@ -6,12 +6,23 @@ raw, stationary accelerometer and gyroscope data, and `imu_allan.py` runs the Al
 analysis on it. The results of the first overnight run are in
 [results/RESULTS.md](results/RESULTS.md).
 
+The flight accuracy eval measures how far the drone strays from its setpoints, in the sim or on
+the real drone with mocap, and whether the cause is PX4's estimate or its control. Design and how
+to run it: [docs/design/flight_accuracy.md](../../docs/design/flight_accuracy.md). What it found
+wrong with the sim, and the fixes:
+[results/flight_accuracy_fixes_2026-11-05.md](results/flight_accuracy_fixes_2026-11-05.md).
+
 ## Layout
 
 ```
 perch_eval/
   imu_log.py            standalone IMU logger for the D435i (no ROS needed)
   imu_allan.py          Allan variance analysis of a log (numpy, pandas, matplotlib)
+  flight_path.py        flies the flight accuracy eval's test path once, through Commander
+  flight_accuracy.py    flight accuracy analysis of rosbags: errors, settling, path plots,
+                        and a before/after comparison of two sets
+scripts/
+  flight_accuracy_runs.sh  flies the path N times (sim, or REAL=1), recording, then analyses
 calibration/            raw data from the 2026-10-20 IMU calibration (see below)
 results/                the overnight run's sidecar, status log and analysis; RESULTS.md
 resource/

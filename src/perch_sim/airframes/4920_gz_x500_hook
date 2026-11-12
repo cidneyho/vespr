@@ -28,6 +28,21 @@ fi
 # Fly without a ground station
 param set-default NAV_DLL_ACT 0
 
+# Where the flow sensor and rangefinder are, from the drone's centre (m, forward-right-down).
+# Must match config/x500_hook.yaml (flow x 0.03 z -0.052, rangefinder z -0.057, z up there)
+param set-default EKF2_OF_POS_X 0.03
+param set-default EKF2_OF_POS_Z 0.052
+param set-default EKF2_RNG_POS_Z 0.057
+# What the rangefinder reads with the drone on the ground (m): 0.17 measured in the sim
+param set-default EKF2_MIN_RNG 0.17
+# How late flow readings arrive (ms). The sim's flow sensor has no processing delay: with PX4's
+# default 20 ms, its readings lined up best with the true motion 28 ms later (2026-11-05)
+param set-default EKF2_OF_DELAY 0
+# The sim's magnetic declination (deg), measured from its magnetometer against Gazebo's true
+# attitude (2026-11-05). Without GPS, PX4 can't look it up and uses 0, which turns the heading by
+# this much. Gazebo's sign is the opposite of the real one at the world's location (+3.4)
+param set-default EKF2_MAG_DECL -2.6
+
 # The hook and camera make it heavier than the plain x500: measured hover thrust 0.76 (PX4's
 # own estimate in flight). Fixed, not learned: hanging from the branch in land mode, PX4 doesn't
 # know it has landed and learns the lower thrust the branch needs, about 0.5. Taking off from

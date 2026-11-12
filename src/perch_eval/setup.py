@@ -20,6 +20,8 @@ setup(
     entry_points={
         'console_scripts': [
             'imu_log = perch_eval.imu_log:main',
+            'flight_path = perch_eval.flight_path:main',
+            'flight_accuracy = perch_eval.flight_accuracy:main',
         ],
     },
 )
