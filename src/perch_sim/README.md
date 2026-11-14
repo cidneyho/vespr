@@ -89,7 +89,13 @@ Both worlds have a speckled floor, `perch_floor`, because optical flow can't tra
 GPS=1 ~/vespr/src/perch_sim/scripts/run_sim.sh perch_rod gz_x500_hook  # GPS on, as outdoors
 ```
 
+`run_sim.sh` starts PX4 from its default parameters every time. Otherwise PX4 keeps what it saved last run, including magnetometer offsets it learns in flight; Gazebo's magnetometer has none, so the saved offsets turned the heading by up to 9° in the flight accuracy eval. `KEEP_PARAMS=1` keeps the saved parameters, for example after setting one by hand at the `pxh>` prompt.
+
 The model is generated from [config/x500_hook.yaml](config/x500_hook.yaml) by [scripts/make_hook_model.py](scripts/make_hook_model.py). Design: [docs/design/flow_rangefinder.md](../../docs/design/flow_rangefinder.md).
+
+**Flow sensor.** The hook drone's flow sensor is our own Gazebo plugin, [gz_plugins/optical_flow](gz_plugins/optical_flow/), not PX4's. PX4's averages how far the tracked floor features move, so it reads the floor turning (when the drone yaws) or shrinking and growing (when it climbs or descends) as sideways motion: about 8 cm/s at 30°/s of yaw, which moved the drone 7 to 17 cm in every 90° turn of the flight accuracy eval. Ours fits a shift, rotation and zoom to the features and reports only the shift; everything else (camera, topic, message, rate) is PX4's. `shift_only: false` in the config's `flow` block gives PX4's behaviour back for comparison. `run_sim.sh` builds the plugin against PX4's build the first time it runs. PX4's own flow plugin still loads and prints `Failed to create optical flow sensor` once at startup: it doesn't handle our sensor type, which is expected.
+
+**Sensor settings.** The airframe tells PX4 where the flow sensor and rangefinder are (`EKF2_OF_POS_*`, `EKF2_RNG_POS_Z`), what the rangefinder reads on the ground (`EKF2_MIN_RNG` 0.17 m), that flow readings arrive without delay (`EKF2_OF_DELAY` 0; PX4's 20 ms suits a real sensor) and the sim's magnetic declination (`EKF2_MAG_DECL` −2.6°, measured; without GPS PX4 can't look it up and uses 0). Change them with the model.
 
 **Hover thrust.** The airframe fixes `MPC_THR_HOVER` at 0.76, PX4's own in-flight estimate for this drone (the plain X500 uses 0.60), and turns hover-thrust learning off (`MPC_USE_HTE 0`). With learning on, hanging from the branch in land mode taught PX4 about 0.5, and it then couldn't lift off the hook. 0.76 is the sim drone's value: measure the real drone's from a hover log.
 

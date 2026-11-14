@@ -50,6 +50,9 @@ drone:
     x: 0.03
     y: 0.0
     z: -0.052
+    # true: our flow sensor (gz_plugins/optical_flow) reports only the ground's shift. false: as
+    # PX4's, which also reads the drone's yaw (about 8 cm/s at 30 deg/s) and climbs as sideways motion
+    shift_only: true
   # Rangefinder (single-beam lidar), looking down. Its box is 0.02 m tall
   rangefinder:
     x: 0.0

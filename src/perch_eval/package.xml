@@ -10,6 +10,16 @@
   <!-- imu_log needs pyrealsense2, which is built from source on the Jetson and
        found through its --librealsense option, so it is not a rosdep here. -->
 
+  <!-- flight_path flies the flight accuracy eval's path; flight_accuracy reads its rosbags. -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>perch_flight</exec_depend>
+  <exec_depend>px4_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>rosbag2_py</exec_depend>
+  <exec_depend>rosidl_runtime_py</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-matplotlib</exec_depend>
+
   <!-- imu_allan, the analysis script, and its tests. -->
   <test_depend>python3-numpy</test_depend>
   <test_depend>python3-pandas</test_depend>
