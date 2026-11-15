@@ -18,6 +18,7 @@
 #   TURN=0 ...                # no turns: the nose stays north
 #   WAIT=30 ...               # seconds on the ground after PX4 is ready, before taking off (10)
 #   GPS=1 ...                 # sim: GPS on (run_sim.sh); off by default
+#   EV=mocap ...              # sim: fly on mocap through external_bridge (EV=vio: on fake_vio)
 #   BEFORE=<an earlier output folder> ...   # also compare with that set: before_after.png
 # Sim: Gazebo opens its window each run: the hook drone's camera (and so its optical flow) needs
 # rendering, which headless only gives with GPU rendering (perch_sim/README.md).
@@ -35,13 +36,14 @@ WAIT=${WAIT:-10}
 REAL=${REAL:-}
 BEFORE=${BEFORE:-}
 export GPS=${GPS:-}
+export EV=${EV:-}
 ROOTFS=${PX4_DIR:-$HOME/PX4-Autopilot}/build/px4_sitl_default/rootfs  # PX4's ulogs are here
 WORLD=perch_rod
 OUT=${OUT:-$HOME/vespr_recordings/flight_accuracy/$(date +%Y-%m-%dT%H-%M-%S)}
 TOPICS=(/fmu/in/trajectory_setpoint /fmu/out/vehicle_local_position /fmu/out/vehicle_status_v1
-        /mocap/vespr/pose /fmu/out/estimator_status_flags)
+        /mocap/vespr/pose /fmu/out/estimator_status_flags /fmu/in/vehicle_visual_odometry)
 mkdir -p "$OUT"
-echo "${REAL:+real drone, }altitude $ALTITUDE m, climb $CLIMB m, turn $TURN deg, wait $WAIT s, GPS ${GPS:-off}" \
+echo "${REAL:+real drone, }altitude $ALTITUDE m, climb $CLIMB m, turn $TURN deg, wait $WAIT s, GPS ${GPS:-off}, EV ${EV:-off}" \
   | tee "$OUT/settings.txt"
 
 if [ -n "$REAL" ]; then
@@ -95,6 +97,23 @@ record_and_fly() {
   sleep 1
 }
 
+# mocap_sim, and with EV the bridge and its input
+start_inputs() {
+  start mocap ros2 launch perch_sim mocap_sim.launch.py world:="$WORLD" \
+    && wait_for mocap "Branch perch_point at" 60 \
+    && start_external
+}
+
+# EV=mocap or EV=vio: PX4 flies on external_bridge, fed by mocap_sim or fake_vio
+start_external() {
+  [ -z "$EV" ] && return 0
+  if [ "$EV" = vio ]; then
+    start vio ros2 launch perch_sim fake_vio.launch.py world:="$WORLD" || return 1
+  fi
+  start bridge ros2 launch perch_flight external_bridge.launch.py source:="$EV" \
+    && wait_for bridge "Zeroed at" 60
+}
+
 bags=()
 for run in $(seq -f '%02g' 1 "$RUNS"); do
   LOGS="$OUT/run_$run.logs"
@@ -111,9 +130,12 @@ for run in $(seq -f '%02g' 1 "$RUNS"); do
   start agent MicroXRCEAgent udp4 -p 8888
   # PX4 needs a stdin that stays open, or its shell spins and fills the log
   start sim bash -c "tail -f /dev/null | exec '$VESPR/src/perch_sim/scripts/run_sim.sh' $WORLD gz_x500_hook"
-  if wait_for sim "Ready for takeoff" 180 \
-      && start mocap ros2 launch perch_sim mocap_sim.launch.py world:="$WORLD" \
-      && wait_for mocap "Branch perch_point at" 60 \
+  # With EV, PX4 gets its position from external_bridge, so it can't be ready before the bridge
+  # runs: start mocap and the bridge as soon as Gazebo is up, then wait for PX4
+  if { [ -z "$EV" ] || wait_for sim "gz_bridge\] world" 180; } \
+      && { [ -z "$EV" ] || start_inputs; } \
+      && wait_for sim "Ready for takeoff" 180 \
+      && { [ -n "$EV" ] || start_inputs; } \
       && record_and_fly; then
     bags+=("$OUT/run_$run")
   else
