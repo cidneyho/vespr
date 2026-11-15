@@ -147,6 +147,8 @@ All of them read Gazebo's ground truth directly over gz-transport, perfect by de
 
 ## QGroundControl (host)
 
+To fly the sim by hand with the RadioMaster TX16S, see [radio_controller.md](radio_controller.md).
+
 QGC runs on the host, not in the container. The container uses host networking, so QGC finds the simulated drone automatically. Download the x86_64 AppImage from the [QGC install page](https://docs.qgroundcontrol.com/Stable_V5.1/en/qgc-user-guide/getting_started/download_and_install.html). The current AppImage targets Ubuntu 24.04 and later. On 22.04 you need an older release. Prerequisites:
 
 ```bash
