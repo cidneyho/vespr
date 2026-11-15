@@ -82,12 +82,25 @@ Both worlds have a speckled floor, `perch_floor`, because optical flow can't tra
 
 ### Hook drone
 
-`gz_x500_hook` is the X500 with our perching hook, a forward RealSense-like camera, and a downward optical flow sensor and rangefinder. It flies like the real drone indoors: GPS off, positioned by flow and rangefinder. Its PX4 airframe is [airframes/4920_gz_x500_hook](airframes/4920_gz_x500_hook), which also turns off the ground-station check, so step 3 of the quick start isn't needed.
+`gz_x500_hook` is the X500 with our perching hook, a forward RealSense-like camera, and a downward optical flow sensor and rangefinder. It flies like the real drone indoors: GPS off, positioned by flow and rangefinder. Its PX4 airframe is [airframes/4920_gz_x500_hook](airframes/4920_gz_x500_hook), and its settings, which also turn off the ground-station check (so step 3 of the quick start isn't needed), are in [config/x500_hook.params](config/x500_hook.params).
 
 ```bash
-~/vespr/src/perch_sim/scripts/run_sim.sh perch_rod gz_x500_hook        # GPS off
-GPS=1 ~/vespr/src/perch_sim/scripts/run_sim.sh perch_rod gz_x500_hook  # GPS on, as outdoors
+~/vespr/src/perch_sim/scripts/run_sim.sh perch_rod gz_x500_hook           # GPS off
+GPS=1 ~/vespr/src/perch_sim/scripts/run_sim.sh perch_rod gz_x500_hook     # GPS on, as outdoors
+EV=mocap ~/vespr/src/perch_sim/scripts/run_sim.sh perch_rod gz_x500_hook  # flies on mocap (stages 1, 2)
+EV=vio ~/vespr/src/perch_sim/scripts/run_sim.sh perch_rod gz_x500_hook    # flies on VIO (stage 3)
 ```
+
+**PX4 settings.** Every PX4 parameter the sim changes is in [config/x500_hook.params](config/x500_hook.params), with why: PX4 shell commands that the airframe sources after PX4's X500. The `GPS` and `EV` options are blocks in it. Change PX4 settings there, not in the airframe.
+
+**Flying on mocap or VIO (`EV`).** `EV=mocap` or `EV=vio` sets PX4 to fly on `external_bridge` instead of optical flow: position, height and heading from the bridge, compass off, and with `mocap` flow off too. Start the bridge with the same source, and its input (`mocap_sim` or `fake_vio`):
+
+```bash
+ros2 launch perch_sim mocap_sim.launch.py world:=perch_rod
+ros2 launch perch_flight external_bridge.launch.py source:=mocap
+```
+
+PX4's x then points the way the drone faced at the start, not north: `goto 1 0 1.5` is 1 m ahead of where it started. Details: [perch_flight](../perch_flight/README.md#fly-on-mocap-or-vio-external_bridge), [docs/design/external_bridge.md](../../docs/design/external_bridge.md).
 
 `run_sim.sh` starts PX4 from its default parameters every time. Otherwise PX4 keeps what it saved last run, including magnetometer offsets it learns in flight; Gazebo's magnetometer has none, so the saved offsets turned the heading by up to 9° in the flight accuracy eval. `KEEP_PARAMS=1` keeps the saved parameters, for example after setting one by hand at the `pxh>` prompt.
 
@@ -95,9 +108,9 @@ The model is generated from [config/x500_hook.yaml](config/x500_hook.yaml) by [s
 
 **Flow sensor.** The hook drone's flow sensor is our own Gazebo plugin, [gz_plugins/optical_flow](gz_plugins/optical_flow/), not PX4's. PX4's averages how far the tracked floor features move, so it reads the floor turning (when the drone yaws) or shrinking and growing (when it climbs or descends) as sideways motion: about 8 cm/s at 30°/s of yaw, which moved the drone 7 to 17 cm in every 90° turn of the flight accuracy eval. Ours fits a shift, rotation and zoom to the features and reports only the shift; everything else (camera, topic, message, rate) is PX4's. `shift_only: false` in the config's `flow` block gives PX4's behaviour back for comparison. `run_sim.sh` builds the plugin against PX4's build the first time it runs. PX4's own flow plugin still loads and prints `Failed to create optical flow sensor` once at startup: it doesn't handle our sensor type, which is expected.
 
-**Sensor settings.** The airframe tells PX4 where the flow sensor and rangefinder are (`EKF2_OF_POS_*`, `EKF2_RNG_POS_Z`), what the rangefinder reads on the ground (`EKF2_MIN_RNG` 0.17 m), that flow readings arrive without delay (`EKF2_OF_DELAY` 0; PX4's 20 ms suits a real sensor) and the sim's magnetic declination (`EKF2_MAG_DECL` −2.6°, measured; without GPS PX4 can't look it up and uses 0). Change them with the model.
+**Sensor settings.** The settings file tells PX4 where the flow sensor and rangefinder are (`EKF2_OF_POS_*`, `EKF2_RNG_POS_Z`), what the rangefinder reads on the ground (`EKF2_MIN_RNG` 0.17 m), that flow readings arrive without delay (`EKF2_OF_DELAY` 0; PX4's 20 ms suits a real sensor) and the sim's magnetic declination (`EKF2_MAG_DECL` −2.6°, measured; without GPS PX4 can't look it up and uses 0). Change them with the model.
 
-**Hover thrust.** The airframe fixes `MPC_THR_HOVER` at 0.76, PX4's own in-flight estimate for this drone (the plain X500 uses 0.60), and turns hover-thrust learning off (`MPC_USE_HTE 0`). With learning on, hanging from the branch in land mode taught PX4 about 0.5, and it then couldn't lift off the hook. 0.76 is the sim drone's value: measure the real drone's from a hover log.
+**Hover thrust.** The settings file fixes `MPC_THR_HOVER` at 0.76, PX4's own in-flight estimate for this drone (the plain X500 uses 0.60), and turns hover-thrust learning off (`MPC_USE_HTE 0`). With learning on, hanging from the branch in land mode taught PX4 about 0.5, and it then couldn't lift off the hook. 0.76 is the sim drone's value: measure the real drone's from a hover log.
 
 ### Camera for vision tests
 
