@@ -1,6 +1,6 @@
 # Design: external_bridge
 
-Status: implemented and flown in the sim (2026-11-15) on mocap, VIO and the real drone's clock path: [results](../../src/perch_eval/results/external_bridge_2026-11-15.md). Not yet tested: a start heading other than 0°, noisy input, a reset mid-flight.
+Status: implemented and flown in the sim (2026-11-15) on mocap, VIO and the real drone's clock path; results to follow. Not yet tested: a start heading other than 0°, noisy input, a reset mid-flight.
 
 The bridge must work on the real drone as well as in the sim. The PX4 parameter file here is the sim's; the real drone's PX4 parameters are tracked separately.
 
