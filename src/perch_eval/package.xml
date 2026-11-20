@@ -8,7 +8,7 @@
   <license>TODO: License declaration</license>
 
   <!-- imu_log needs pyrealsense2, which is built from source on the Jetson and
-       found through its --librealsense option, so it is not a rosdep here. -->
+       found through its librealsense build option, so it is not a rosdep here. -->
 
   <!-- flight_path flies the flight accuracy eval's path; flight_accuracy reads its rosbags. -->
   <exec_depend>rclpy</exec_depend>

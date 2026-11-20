@@ -5,6 +5,9 @@
 # Our vehicles use their own airframe from airframes/ when there is one (else PX4's plain X500).
 # gz_x500_hook flies indoors on optical flow and its rangefinder; GPS=1 turns GPS back on:
 #   GPS=1 run_sim.sh perch_rod gz_x500_hook
+# EV=mocap or EV=vio makes it fly on external_bridge instead (perch_flight; start it too):
+#   EV=mocap run_sim.sh perch_rod gz_x500_hook
+# Its PX4 settings, and what these options change, are in config/x500_hook.params.
 # Each run starts from PX4's default parameters. PX4 otherwise keeps every parameter it saved
 # last run, including magnetometer offsets it learns in flight: Gazebo's magnetometer has no
 # offset, so the saved ones turn the heading by several degrees (perch_eval, 2026-11-05).
@@ -50,8 +53,14 @@ if [ -f "$PERCH_SIM/models/$MODEL/model.sdf" ]; then
   for airframe in "$PERCH_SIM"/airframes/*_"$VEHICLE"; do
     if [ -e "$airframe" ]; then AIRFRAME=$(basename "$airframe" | cut -d_ -f1); fi
   done
-  export PX4_GPS=${GPS:-}  # read by our airframe files
-  echo "run_sim: $VEHICLE in $WORLD, airframe $AIRFRAME${GPS:+, GPS=$GPS}"
+  case "${EV:-}" in
+    ''|mocap|vio) ;;
+    *) echo "run_sim: EV must be mocap or vio, not '$EV'"; exit 1 ;;
+  esac
+  # Read by our airframe files and the settings they source
+  export PX4_GPS=${GPS:-} PX4_EV=${EV:-}
+  export PERCH_PX4_PARAMS="$PERCH_SIM/config/$MODEL.params"
+  echo "run_sim: $VEHICLE in $WORLD, airframe $AIRFRAME${GPS:+, GPS=$GPS}${EV:+, EV=$EV}"
   PX4_SYS_AUTOSTART=$AIRFRAME PX4_SIM_MODEL=$VEHICLE PX4_GZ_WORLD=$WORLD \
     exec build/px4_sitl_default/bin/px4
 fi
