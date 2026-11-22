@@ -95,8 +95,8 @@ class Zeroer:
     The start is the average of the samples in the first window_ns of input (by their stamps), not
     one sample: a single sample's noise would stay in PX4's frame for the whole flight, as a fixed
     shift and turn (the 2026-11-21 noise sweep: up to 14 cm and 5° from one sample with 5 cm and
-    0.05 rad of noise). Averaging n samples cuts that by √n: 1 s is 120 mocap samples or 30 VIO
-    ones. The drone should sit still meanwhile; if it moves, the start is where it was on average.
+    0.05 rad of noise). Averaging n samples cuts that by √n, whatever rate the input arrives at.
+    The drone should sit still meanwhile; if it moves, the start is where it was on average.
 
     restart() (after a sim reset) collects a new start; the new frame raises reset_counter, which
     tells PX4 the jump is deliberate.
