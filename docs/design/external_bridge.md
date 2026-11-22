@@ -48,7 +48,7 @@ flowchart LR
 | Step | Mocap | VIO |
 |---|---|---|
 | Read | position, orientation. Velocity and variances NaN | position, orientation, body velocity, turn rates, covariance diagonals |
-| Zero at start | subtract the room position of the first sample, turn by its heading | the same. VIO is already near zero at its own start; zeroing again lines it up with when the bridge started |
+| Zero at start | average the first second of samples (the start); subtract its room position, turn by its heading | the same. VIO is already near zero at its own start, but may have started long before the bridge (on the Jetson's boot, then carried or left to drift): zeroing again lines it up with when the bridge started |
 | Flip | the same | the same; velocity and turn rates flip too |
 | Stamp | the same | the same |
 
@@ -56,7 +56,7 @@ flowchart LR
 
 PX4's local frame (`/fmu/out/vehicle_local_position`) is a **fixed** frame, not one that moves with the drone. Today, flying on flow, its origin is where PX4's estimate started (the takeoff spot) and its x points north, from the compass. `Commander`'s positions (`goto(north, east, altitude)`) and the planner's phase 1 targets are in it.
 
-With EV heading fused, PX4 takes the EV frame as its own (checked in PX4 v1.16, `ev_pos_control.cpp`). So the bridge sends positions **from where the drone was in the first sample**, with x along the way the drone faced then, kept level. That is exactly how `fake_vio` defines its frame, so:
+With EV heading fused, PX4 takes the EV frame as its own (checked in PX4 v1.16, `ev_pos_control.cpp`). So the bridge sends positions **from where the drone was at the start**, with x along the way the drone faced then, kept level. That is exactly how `fake_vio` defines its frame, so:
 
 - PX4's origin stays the takeoff spot, as today. `Commander` and phase 1 targets keep their meaning.
 - Stage 1 (mocap) and stage 3 (VIO) give PX4 the same frame. The swap changes nothing in the mission.
@@ -78,13 +78,15 @@ Moves relative to the nose don't change. Positions and headings given in the fix
 
 **Decided (indoor first):** with `EV` on, `goto <north> <east> <alt>` already means `goto <forward> <right> <alt>` from where the drone started, because the bridge makes PX4's x the starting heading. `Commander`'s logic doesn't change. Only the words `north`, `east` and "0 = facing north" in `Commander`, `flight_cli`, `fly_square` and the mission goal are wrong while `EV` is on; renaming them is optional and separate. Outdoor flights (GPS, true north) are decided later.
 
-The start is the bridge's first sample, taken while the drone sits on the ground. A re-launch from the branch doesn't move it, since the bridge keeps running.
+The start is the average of the bridge's first second of input (parameter `zero_window`, 1 s by default), taken while the drone sits on the ground. Nothing goes to PX4 during that second. A re-launch from the branch doesn't move it, since the bridge keeps running.
+
+**Why an average, not the first sample.** The start is subtracted from every later sample, so its error doesn't average out like the rest of the noise: it stays in PX4's frame for the whole flight, as a fixed shift and turn. The noise sweep ([noise_sweep_2026-11-21.md](../../src/perch_eval/results/noise_sweep_2026-11-21.md), on the eval branch) zeroed on one sample and got up to 7 cm off with 2 cm of mocap noise, and 14 cm and 5° with 5 cm and 0.05 rad of VIO noise. Averaging n samples cuts that by √n: 1 s is 120 mocap samples (about 11× less) or 30 VIO ones (about 5× less). Headings are averaged as directions, so 179° and −179° give 180°. The bridge logs the spread of the samples it averaged: if the drone moved during the second, the start is where it was on average.
 
 Phases 2 and 3 use only the branch relative to the drone (from the detector), so the origin doesn't affect them. The evaluator reads mocap directly, in the room frame, so it isn't affected either.
 
-**Zeroing again.** If the input's stamps jump back more than 1 s (a sim reset, as in `fake_vio`), the bridge zeroes again and raises `reset_counter`, so PX4 knows the jump is deliberate. A sample only slightly older than the last one arrived out of order (Wi-Fi) and is dropped, never zeroed on: PX4 already has a newer one.
+**Zeroing again.** If the input's stamps jump back more than 1 s (a sim reset, as in `fake_vio`), the bridge averages a new start (another second without sending) and raises `reset_counter`, so PX4 knows the jump is deliberate. A sample only slightly older than the last one arrived out of order (Wi-Fi) and is dropped, never zeroed on: PX4 already has a newer one.
 
-**If the bridge restarts mid-flight**, it zeroes again where the drone is then. Its `reset_counter` starts from a random value, so it most likely differs from the last one PX4 saw (1 in 256 that it doesn't). PX4's frame still moves under `Commander`'s target. A real VIO restart does the same, so stage 3 will need a way to handle it anyway. Not handled now.
+**If the bridge restarts mid-flight**, it zeroes again where the drone is then (on average over that second, so off by up to about half a second of flight). Its `reset_counter` starts from a random value, so it most likely differs from the last one PX4 saw (1 in 256 that it doesn't). PX4's frame still moves under `Commander`'s target. A real VIO restart does the same, so stage 3 will need a way to handle it anyway. Not handled now.
 
 `fake_vio`'s helpers in `perch_sim/poses.py` are the reference for zeroing. The bridge needs its own copy, since `perch_flight` must not depend on `perch_sim`.
 
@@ -216,7 +218,7 @@ Also needed on the real drone, outside the bridge: the `EKF2_EV_*`, `EKF2_HGT_RE
 
 ## Testing
 
-- **Unit:** the flip on known poses (facing +y in ROS is facing −y in FRD); zeroing at the start position and heading; NaN velocity and variances for mocap; covariance diagonal for VIO; quaternion normalised; stamp in µs; clock detection on both sides of 10⁹ s (a Gazebo stamp of a few minutes passes through unchanged, a 2026 time-of-day stamp gets the gap added); `reset_counter` rises on a re-zero.
+- **Unit:** the flip on known poses (facing +y in ROS is facing −y in FRD); zeroing at the start position and heading; the start averaged over the window, headings across ±180°; nothing sent before the window ends; NaN velocity and variances for mocap; covariance diagonal for VIO; quaternion normalised; stamp in µs; clock detection on both sides of 10⁹ s (a Gazebo stamp of a few minutes passes through unchanged, a 2026 time-of-day stamp gets the gap added); `reset_counter` rises on a re-zero.
 - **Node:** fake `PoseStamped` and `Odometry` in, check the published `VehicleOdometry`. With system-clock stamps: nothing published before a fake `timesync_status`, then stamps shifted by its offset.
 - **The real-drone clock path, in SITL.** SITL runs the same time sync against the computer's clock as the Pixhawk does against the Jetson. A small test-only node re-stamps `mocap_sim`'s output with the system clock (as the real mocap PC does); the bridge detects it and converts. Pass: same hover and same `estimator_status_flags` as with Gazebo stamps. This tests the real drone's clock handling without the drone.
 - **Parameter file:** with `EV` off, the sim flies exactly as before the move (same `param show` output from PX4, same hover).

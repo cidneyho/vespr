@@ -79,14 +79,14 @@ ros2 run perch_flight flight_cli                                     # 5. fly
 For VIO: `EV=vio`, `fake_vio.launch.py` and `source:=vio`. The `source` argument is the stage switch.
 
 What it does to each sample:
-- **Zeroes at the start.** Positions go to PX4 from where the drone was in the first sample, with x along the way it faced then (as VIO does). So PX4's local frame starts at the takeoff spot, as on flow, and is the same on mocap and VIO. But x is the starting heading, not north: `goto 1 0 1.5` flies 1 m ahead of where the drone started, and yaw 0 faces that way. Moves relative to the nose (`forward`, `yaw`) don't change.
+- **Zeroes at the start.** The bridge averages its first second of input (`zero_window`, in s) and sends PX4 nothing meanwhile. Positions then go to PX4 from where the drone was in that second, with x along the way it faced then (as VIO does). So PX4's local frame starts at the takeoff spot, as on flow, and is the same on mocap and VIO. But x is the starting heading, not north: `goto 1 0 1.5` flies 1 m ahead of where the drone started, and yaw 0 faces that way. Moves relative to the nose (`forward`, `yaw`) don't change.
 - **Turns to PX4's axes:** y and z change sign (ROS is x forward, y left, z up; PX4 is y right, z down).
 - **Times it on PX4's clock**, detected from the stamp, nothing to set. In the sim the stamps are Gazebo time, which is already PX4's clock: they pass through. On the real drone they are the time of day (over 10⁹ s), and the bridge adds the offset PX4 measures between the clocks (`/fmu/out/timesync_status`); it sends nothing until it has one. See `SYSTEM_CLOCK_MIN_NS` in [perch_flight/external_convert.py](perch_flight/external_convert.py). On the real drone the mocap PC's clock must also agree with the Jetson's (chrony).
 - **Mocap:** position and orientation only; PX4 takes how far to trust it from `EKF2_EVP_NOISE` and `EKF2_EVA_NOISE`. **VIO:** also velocity, turning rate and their variances from the `Odometry` covariance.
 
 Checking PX4 uses it, at the `pxh>` prompt: `listener estimator_status_flags` shows `cs_ev_pos`, `cs_ev_hgt` and `cs_ev_yaw` true.
 
-The bridge logs a warning when its input stops for 0.2 s, and drops a sample that arrives out of order. If the input's stamps jump back more than 1 s (a sim reset), it zeroes again and tells PX4 the jump is deliberate.
+The bridge logs a warning when its input stops for 0.2 s, and drops a sample that arrives out of order. If the input's stamps jump back more than 1 s (a sim reset), it zeroes again (another second's average) and tells PX4 the jump is deliberate.
 
 ## References
 

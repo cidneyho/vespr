@@ -58,11 +58,17 @@ def test_the_line_between_clocks():
 
 # ---- Zero at start ----
 
-def test_zero_at_the_first_pose_level_along_its_heading():
-    zeroer = Zeroer(random.Random(1))
+def zeroed_at(pose, window_ns=0):
+    zeroer = Zeroer(window_ns, random.Random(1))
+    assert zeroer.add(pose, 0)
+    return zeroer
+
+
+def test_zero_at_the_start_level_along_its_heading():
     tilt = (0.0, math.sin(0.05), 0.0, math.cos(0.05))  # 0.1 rad nose down
     facing_north = from_yaw(math.pi / 2)
     start = ((3.0, 2.0, 0.24), normalise(quat_multiply(facing_north, tilt)))
+    zeroer = zeroed_at(start)
     position, q = zeroer.apply(start)
     assert position == pytest.approx((0, 0, 0))
     assert q == pytest.approx(tilt)  # heading taken out, tilt kept: the frame is level
@@ -74,23 +80,52 @@ def test_zero_at_the_first_pose_level_along_its_heading():
     assert q == pytest.approx(from_yaw(math.pi / 2))
 
 
+def test_nothing_applies_before_zeroed():
+    zeroer = Zeroer(S, random.Random(1))
+    assert not zeroer.add(((0.0, 0.0, 0.0), LEVEL), 0)
+    with pytest.raises(ValueError):
+        zeroer.apply(((0.0, 0.0, 0.0), LEVEL))
+
+
+def test_start_is_the_average_over_the_window():
+    zeroer = Zeroer(S, random.Random(1))
+    # Noisy samples around (1, 2, 0) facing +x, 0.25 s apart: zeroed at the one that ends 1 s
+    samples = [((1.02, 2.0, 0.01), from_yaw(0.02)), ((0.98, 2.03, -0.01), from_yaw(-0.03)),
+               ((1.01, 1.98, 0.0), from_yaw(0.01)), ((0.99, 1.99, 0.0), from_yaw(0.0))]
+    for i, pose in enumerate(samples):
+        assert not zeroer.add(pose, i * S // 4)
+    assert zeroer.add(((1.0, 2.0, 0.0), LEVEL), S)
+    (x, y, z), heading = zeroer.start
+    assert (x, y, z) == pytest.approx((1.0, 2.0, 0.0))
+    assert heading == pytest.approx(0.0, abs=1e-5)
+    assert 0 < zeroer.spread < 0.03
+    assert zeroer.apply(((1.0, 2.0, 0.0), LEVEL))[0] == pytest.approx((0, 0, 0))
+
+
+def test_start_heading_averages_across_180_degrees():
+    zeroer = Zeroer(S, random.Random(1))
+    zeroer.add(((0.0, 0.0, 0.0), from_yaw(math.radians(179))), 0)
+    zeroer.add(((0.0, 0.0, 0.0), from_yaw(math.radians(-179))), S)
+    assert abs(zeroer.start[1]) == pytest.approx(math.pi)  # 180°, not 0°
+
+
 def test_zero_again_raises_the_reset_counter():
-    zeroer = Zeroer(random.Random(1))
-    zeroer.apply(((1.0, 0.0, 0.0), LEVEL))
+    zeroer = zeroed_at(((1.0, 0.0, 0.0), LEVEL))
     first = zeroer.reset_counter
-    zeroer.zero(((5.0, 5.0, 0.0), LEVEL))
+    zeroer.restart()
+    assert not zeroer.zeroed
+    assert zeroer.add(((5.0, 5.0, 0.0), LEVEL), 10 * S)
     assert zeroer.reset_counter == (first + 1) % 256
     assert zeroer.apply(((5.0, 5.0, 0.0), LEVEL))[0] == pytest.approx((0, 0, 0))
 
 
 def test_restarted_bridges_start_from_different_counters():
-    counters = {Zeroer(random.Random(seed)).reset_counter for seed in range(20)}
+    counters = {Zeroer(rng=random.Random(seed)).reset_counter for seed in range(20)}
     assert len(counters) > 10
 
 
 def test_variances_turn_with_the_start_heading():
-    zeroer = Zeroer(random.Random(1))
-    zeroer.apply(((0.0, 0.0, 0.0), from_yaw(math.pi / 2)))  # started facing +y
+    zeroer = zeroed_at(((0.0, 0.0, 0.0), from_yaw(math.pi / 2)))  # started facing +y
     # Uncertain along the room's y = along the start heading = the start frame's x
     assert zeroer.turn_variances((0.0, 4.0, 1.0)) == pytest.approx((4.0, 0.0, 1.0))
     assert isnan3(zeroer.turn_variances((math.nan,) * 3))
@@ -148,12 +183,13 @@ def test_covariance_diagonal():
 # ---- The node ----
 
 class Rig:
-    def __init__(self, input_type='pose'):
+    def __init__(self, input_type='pose', zero_window=0.0):
         self.context = rclpy.Context()
         rclpy.init(context=self.context, domain_id=random.randint(100, 200))
         self.bridge = ExternalBridge(
             context=self.context,
-            parameter_overrides=[Parameter('input_type', value=input_type)])
+            parameter_overrides=[Parameter('input_type', value=input_type),
+                                 Parameter('zero_window', value=zero_window)])
         self.fake = Node('fake', context=self.context)
         self.out = []
         self.fake.create_subscription(
@@ -238,6 +274,20 @@ def test_sim_reset_zeroes_again(rig):
     after = rig.send(pose_msg(1 * S, (5.0, 5.0, 0.0)))  # sim time back near 0
     assert list(after.position) == pytest.approx([0, 0, 0])
     assert after.reset_counter == (before.reset_counter + 1) % 256
+
+
+def test_nothing_sent_until_the_window_is_averaged():
+    rig = Rig(zero_window=0.5)
+    try:
+        for i, x in enumerate((1.01, 0.99, 1.02)):  # around x = 1, 0.2 s apart
+            rig.input.publish(pose_msg(10 * S + i * S // 5, (x, 0.0, 0.0)))
+        time.sleep(0.2)
+        assert rig.out == []  # 0.4 s of the 0.5 s window
+        first = rig.send(pose_msg(10 * S + 3 * S // 5, (0.98, 0.0, 0.0)))
+        assert list(first.position) == pytest.approx([-0.02, 0, 0])  # from the average, x = 1.0
+        assert len(rig.out) == 1
+    finally:
+        rig.close()
 
 
 def test_system_clock_waits_for_px4s_offset(rig):
