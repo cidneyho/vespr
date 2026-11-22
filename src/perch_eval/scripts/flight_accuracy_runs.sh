@@ -19,6 +19,10 @@
 #   WAIT=30 ...               # seconds on the ground after PX4 is ready, before taking off (10)
 #   GPS=1 ...                 # sim: GPS on (run_sim.sh); off by default
 #   EV=mocap ...              # sim: fly on mocap through external_bridge (EV=vio: on fake_vio)
+#   EV_ARGS="position_noise:=0.005 orientation_noise:=0.01" EV=mocap ...
+#                             # settings for the bridge's input (mocap_sim or fake_vio launch
+#                             # arguments): noise, drift, latency. The truth mocap stays perfect:
+#                             # with EV=mocap a second, noisy mocap_sim feeds the bridge
 #   BEFORE=<an earlier output folder> ...   # also compare with that set: before_after.png
 # Sim: Gazebo opens its window each run: the hook drone's camera (and so its optical flow) needs
 # rendering, which headless only gives with GPU rendering (perch_sim/README.md).
@@ -37,13 +41,14 @@ REAL=${REAL:-}
 BEFORE=${BEFORE:-}
 export GPS=${GPS:-}
 export EV=${EV:-}
+EV_ARGS=${EV_ARGS:-}
 ROOTFS=${PX4_DIR:-$HOME/PX4-Autopilot}/build/px4_sitl_default/rootfs  # PX4's ulogs are here
 WORLD=perch_rod
 OUT=${OUT:-$HOME/vespr_recordings/flight_accuracy/$(date +%Y-%m-%dT%H-%M-%S)}
 TOPICS=(/fmu/in/trajectory_setpoint /fmu/out/vehicle_local_position /fmu/out/vehicle_status_v1
         /mocap/vespr/pose /fmu/out/estimator_status_flags /fmu/in/vehicle_visual_odometry)
 mkdir -p "$OUT"
-echo "${REAL:+real drone, }altitude $ALTITUDE m, climb $CLIMB m, turn $TURN deg, wait $WAIT s, GPS ${GPS:-off}, EV ${EV:-off}" \
+echo "${REAL:+real drone, }altitude $ALTITUDE m, climb $CLIMB m, turn $TURN deg, wait $WAIT s, GPS ${GPS:-off}, EV ${EV:-off}${EV_ARGS:+ ($EV_ARGS)}" \
   | tee "$OUT/settings.txt"
 
 if [ -n "$REAL" ]; then
@@ -104,11 +109,24 @@ start_inputs() {
     && start_external
 }
 
-# EV=mocap or EV=vio: PX4 flies on external_bridge, fed by mocap_sim or fake_vio
+# EV=mocap or EV=vio: PX4 flies on external_bridge, fed by mocap_sim or fake_vio, with EV_ARGS
 start_external() {
   [ -z "$EV" ] && return 0
+  # shellcheck disable=SC2086  # EV_ARGS is a list of launch arguments
   if [ "$EV" = vio ]; then
-    start vio ros2 launch perch_sim fake_vio.launch.py world:="$WORLD" || return 1
+    start vio ros2 launch perch_sim fake_vio.launch.py world:="$WORLD" $EV_ARGS || return 1
+  elif [ -n "$EV_ARGS" ]; then
+    # A second mocap_sim with EV_ARGS feeds the bridge, so the truth (/mocap/vespr/pose) stays
+    # perfect: noisy truth would measure the noise against itself
+    local params=() arg
+    for arg in $EV_ARGS; do params+=(-p "$arg"); done
+    start noisy_mocap ros2 run perch_sim mocap_sim --ros-args -r __node:=noisy_mocap_sim \
+      -r /mocap/vespr/pose:=/noisy/mocap/vespr/pose -r /mocap/branch/pose:=/noisy/mocap/branch/pose \
+      -p world:="$WORLD" "${params[@]}" || return 1
+    start bridge ros2 run perch_flight external_bridge --ros-args -p input_type:=pose \
+      -r input:=/noisy/mocap/vespr/pose
+    wait_for bridge "Zeroed at" 60
+    return
   fi
   start bridge ros2 launch perch_flight external_bridge.launch.py source:="$EV" \
     && wait_for bridge "Zeroed at" 60
