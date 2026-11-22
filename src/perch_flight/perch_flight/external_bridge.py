@@ -6,8 +6,9 @@ Design: docs/design/external_bridge.md.
     /fmu/in/vehicle_visual_odometry    px4_msgs/VehicleOdometry, PX4's "external vision" input
     /fmu/out/timesync_status           read for its clock offset, for system-clock stamps
 
-Positions go out from where the drone was at the first sample, level, x along its heading then
-(the same frame as VIO's), turned to PX4's axes (x forward, y right, z down).
+Positions go out from where the drone was at the start (the average of the first zero_window s of
+input, 1 s by default; nothing is sent meanwhile), level, x along its heading then (the same frame
+as VIO's), turned to PX4's axes (x forward, y right, z down).
 
 Stamps: on Gazebo's clock in the sim, which is already PX4's clock there, so they pass through. On
 the system clock on the real drone, so PX4's measured offset is added. Detected from the stamp's
@@ -37,6 +38,7 @@ SILENCE_WARNING = 0.2  # s without input before warning (wall time)
 # Stamps going back further than this mean a sim reset: zero again. A sample only slightly older
 # than the last one arrived out of order and is dropped instead
 RESET_JUMP_NS = 1_000_000_000
+ZERO_WINDOW = 1.0      # s of input averaged for the start, default of the zero_window parameter
 
 
 def stamp_ns(stamp):
@@ -50,7 +52,9 @@ class ExternalBridge(Node):
         self.input_type = self.declare_parameter('input_type', 'pose').value
         if self.input_type not in ('pose', 'odom'):
             raise ValueError(f"input_type must be 'pose' or 'odom', not {self.input_type!r}")
-        self.zeroer = Zeroer()
+        # Seconds of input averaged for the start (0: the first sample alone). See Zeroer
+        zero_window = self.declare_parameter('zero_window', ZERO_WINDOW).value
+        self.zeroer = Zeroer(window_ns=int(zero_window * 1e9))
         self.offset_us = None       # PX4's clock minus the system clock, from timesync_status
         self.system_clock = None    # which clock the input stamps are on, once seen
         self.last_stamp = None
@@ -103,18 +107,25 @@ class ExternalBridge(Node):
                 # Arrived out of order (Wi-Fi): PX4 already has a newer sample, so drop this one
                 return
             # Stamps went back a long way: the sim was reset (as fake_vio does). Start a new frame
-            self.zeroer.zero(pose)
+            self.zeroer.restart()
             self.get_logger().warn(
                 f'Input stamps went back {(self.last_stamp - ns) * 1e-9:.1f} s: sim reset? '
-                f'Zeroed again here (reset_counter {self.zeroer.reset_counter})')
+                'Zeroing again')
         self.last_stamp = ns
-        first = not self.zeroer.zeroed
-        position, orientation = self.zeroer.apply(pose)
-        if first:
+        if not self.zeroer.zeroed:
+            if not self.zeroer.samples:
+                self.get_logger().info(
+                    f'Zeroing: averaging {self.zeroer.window_ns * 1e-9:.1f} s of input; '
+                    'nothing goes to PX4 until then')
+            n = len(self.zeroer.samples) + 1
+            if not self.zeroer.add(pose, ns):
+                return
             (x, y, z), heading = self.zeroer.start
             self.get_logger().info(
-                f'Zeroed at ({x:.3f}, {y:.3f}, {z:.3f}), heading {math.degrees(heading):.1f} deg: '
-                f'PX4 positions are from here, x along this heading')
+                f'Zeroed at ({x:.3f}, {y:.3f}, {z:.3f}), heading {math.degrees(heading):.1f} deg, '
+                f'from {n} samples (spread {self.zeroer.spread * 100:.1f} cm, reset_counter '
+                f'{self.zeroer.reset_counter}): PX4 positions are from here, x along this heading')
+        position, orientation = self.zeroer.apply(pose)
 
         fields = odometry_fields(
             position, orientation,

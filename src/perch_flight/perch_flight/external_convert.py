@@ -87,33 +87,64 @@ def from_yaw(angle):
 # ---- Zero at start ----
 
 class Zeroer:
-    """Poses from where the drone was at the first sample: level, x along its heading then.
+    """Poses from where the drone was at the start: level, x along its heading then.
 
     The same frame as fake_vio's odom (and real VIO's), so PX4's local frame is the same whether
-    it flies on mocap or VIO. zero() again (after a sim reset) starts a new frame and raises
-    reset_counter, which tells PX4 the jump is deliberate.
+    it flies on mocap or VIO.
+
+    The start is the average of the samples in the first window_ns of input (by their stamps), not
+    one sample: a single sample's noise would stay in PX4's frame for the whole flight, as a fixed
+    shift and turn (the 2026-11-21 noise sweep: up to 14 cm and 5° from one sample with 5 cm and
+    0.05 rad of noise). Averaging n samples cuts that by √n: 1 s is 120 mocap samples or 30 VIO
+    ones. The drone should sit still meanwhile; if it moves, the start is where it was on average.
+
+    restart() (after a sim reset) collects a new start; the new frame raises reset_counter, which
+    tells PX4 the jump is deliberate.
     """
 
-    def __init__(self, rng=random):
+    def __init__(self, window_ns=0, rng=random):
+        self.window_ns = window_ns
         # PX4 spots a new frame by reset_counter changing. A restarted bridge starts from a random
         # value, so it most likely differs from the last one PX4 saw (1 in 256 that it doesn't).
         self.reset_counter = rng.randrange(256)
-        self.start = None  # (position, heading) of the first sample
+        self.start = None     # (position, heading) of the start, once collected
+        self.samples = []     # (stamp ns, position, heading) collected toward the start
+        self.spread = None    # RMS distance of the samples from their average, m
+        self.had_start = False
 
     @property
     def zeroed(self):
         return self.start is not None
 
-    def zero(self, pose):
-        position, orientation = pose
+    def add(self, pose, stamp_ns):
+        """Collect a sample toward the start. True once zeroed: then apply() can be used."""
         if self.zeroed:
+            return True
+        position, orientation = pose
+        self.samples.append((stamp_ns, position, yaw(orientation)))
+        if stamp_ns - self.samples[0][0] < self.window_ns:
+            return False
+        n = len(self.samples)
+        mean = tuple(sum(s[1][i] for s in self.samples) / n for i in range(3))
+        # Headings averaged as directions, so 179° and -179° average to 180°, not 0°
+        heading = math.atan2(sum(math.sin(s[2]) for s in self.samples),
+                             sum(math.cos(s[2]) for s in self.samples))
+        self.spread = math.sqrt(sum(sum((p - m) ** 2 for p, m in zip(s[1], mean))
+                                    for s in self.samples) / n)
+        if self.had_start:
             self.reset_counter = (self.reset_counter + 1) % 256
-        self.start = (position, yaw(orientation))
+        self.start, self.had_start = (mean, heading), True
+        self.samples = []
+        return True
+
+    def restart(self):
+        """Drop the start (and any samples collected): add() collects a new one."""
+        self.start, self.samples = None, []
 
     def apply(self, pose):
-        """The pose in the start frame. Zeroes on the first call."""
+        """The pose in the start frame. Only once zeroed."""
         if not self.zeroed:
-            self.zero(pose)
+            raise ValueError('not zeroed yet: add() samples first')
         (start_position, start_yaw), (position, orientation) = self.start, pose
         unturn = from_yaw(-start_yaw)
         offset = tuple(p - s for p, s in zip(position, start_position))
